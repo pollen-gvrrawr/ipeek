@@ -45,6 +45,7 @@ import sys
 from datetime import datetime
 
 import requests
+from colorama import Fore, Style, just_fix_windows_console
 
 # ---------------------------------------------------------------------------
 # 1. CONFIG
@@ -53,23 +54,23 @@ IPV4_URL = "https://api.ipify.org?format=json"    # IPv4 only
 IPV6_URL = "https://api6.ipify.org?format=json"   # IPv6 only (fails if no IPv6)
 IPAPI_URL = "https://ipapi.co/{ip}/json/"          # primary details API
 IPWHOIS_URL = "https://ipwho.is/{ip}"              # backup details API
-TIMEOUT = 8                                        # seconds per request
+TIMEOUT = 5                                        # seconds per request
 APP_VERSION = "1.0.0"
 
 
 # ---------------------------------------------------------------------------
-# Terminal colours (ANSI). Disabled automatically when output is redirected
-# or when the user passes --no-color.
+# Terminal colours (colorama). Disabled automatically when output is
+# redirected or when the user passes --no-color.
 # ---------------------------------------------------------------------------
 class Color:
-    HEADER = "\033[95m"
-    BLUE = "\033[94m"
-    CYAN = "\033[96m"
-    GREEN = "\033[92m"
-    YELLOW = "\033[93m"
-    RED = "\033[91m"
-    BOLD = "\033[1m"
-    END = "\033[0m"
+    HEADER = Fore.LIGHTMAGENTA_EX
+    BLUE = Fore.LIGHTBLUE_EX
+    CYAN = Fore.LIGHTCYAN_EX
+    GREEN = Fore.LIGHTGREEN_EX
+    YELLOW = Fore.LIGHTYELLOW_EX
+    RED = Fore.LIGHTRED_EX
+    BOLD = Style.BRIGHT
+    END = Style.RESET_ALL
 
     @classmethod
     def disable(cls):
@@ -77,8 +78,7 @@ class Color:
             setattr(cls, name, "")
 
 
-if os.name == "nt":
-    os.system("")  # enables ANSI colour codes in the Windows console
+just_fix_windows_console()  # enables colour codes in the Windows console
 
 
 # ---------------------------------------------------------------------------

@@ -56,12 +56,12 @@ python -m unittest discover -s tests -v
 
 ## Team workflow
 
-* `main` is protected by convention. Nobody pushes to it directly.
+* `main` holds the reviewed, working version of the app.
 * Each member works on a branch named `feature/<name>-<task>`. They open a **pull request**, another member reviews it, and it is merged into `main`.
 * Future work is listed in [BACKLOG.md](BACKLOG.md).
 
 ## Team
 
 * Samantha Guevarra
-* Sofia Gail Lustre
-* Gwyneth Odrajaf
+* Sofiagail Lustre
+* Gwyneth Fajardo
