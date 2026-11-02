@@ -26,7 +26,7 @@ DEVASC Project Activity 3, Option 2. This is a Python command-line prototype for
 ## Install and run
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/pollen-gvrrawr/ipv4-ipv6-address-app
 cd ipv4-ipv6-address-app
 pip install -r requirements.txt
 
