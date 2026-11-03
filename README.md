@@ -27,8 +27,8 @@ DEVASC Project Activity 3, Option 2. IPeek is a prototype for network technician
 ## Install and run
 
 ```bash
-git clone https://github.com/pollen-gvrrawr/ipv4-ipv6-address-app
-cd ipv4-ipv6-address-app
+git clone https://github.com/pollen-gvrrawr/ipeek
+cd ipeek
 pip install -r requirements.txt
 
 python ip_info_app.py                 # interactive menu
@@ -55,7 +55,7 @@ To publish it:
 
 1. The repository must be **public**. GitHub Pages on a private repo needs a paid plan.
 2. Go to **Settings → Pages → Build and deployment**. Set *Source* to **Deploy from a branch**, *Branch* to **main** and *folder* to **/docs**, then click **Save**.
-3. After about a minute the site is live at `https://pollen-gvrrawr.github.io/ipv4-ipv6-address-app/`.
+3. After about a minute the site is live at `https://pollen-gvrrawr.github.io/ipeek/`.
 
 ## Code structure (for teams continuing the project)
 
