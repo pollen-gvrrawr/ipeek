@@ -44,6 +44,18 @@ Run the tests. They work offline because the APIs are mocked:
 python -m unittest discover -s tests -v
 ```
 
+## Web version (GitHub Pages)
+
+[`docs/index.html`](docs/index.html) is a browser version of the app: one HTML file with no build step and no dependencies. It has the same features as the Python app: your public IPv4/IPv6, details with the ipwho.is fallback, offline address analysis, lookup of any address, a map link, and JSON download. GitHub Pages can only serve static files and can't run Python, so the page calls the same APIs from the browser with JavaScript. Its code uses the same five layers as `ip_info_app.py`.
+
+To try it locally, open `docs/index.html` in a browser. Add `?ip=8.8.8.8` to the URL to look up an address straight away.
+
+To publish it:
+
+1. The repository must be **public**. GitHub Pages on a private repo needs a paid plan.
+2. Go to **Settings → Pages → Build and deployment**. Set *Source* to **Deploy from a branch**, *Branch* to **main** and *folder* to **/docs**, then click **Save**.
+3. After about a minute the site is live at `https://pollen-gvrrawr.github.io/ipv4-ipv6-address-app/`.
+
 ## Code structure (for teams continuing the project)
 
 `ip_info_app.py` is split into five layers. Each layer only calls the one below it:
