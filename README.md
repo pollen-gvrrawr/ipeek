@@ -1,6 +1,6 @@
-# IPv4/IPv6 Address Application
+# IPeek: IPv4/IPv6 Address Application
 
-DEVASC Project Activity 3, Option 2. This is a Python command-line prototype for network technicians. It shows a computer's current **public IPv4 and IPv6 addresses** and the details behind them: ISP, ASN, country code, geolocation and timezone. It also analyses any address you type in.
+DEVASC Project Activity 3, Option 2. IPeek is a prototype for network technicians, with a Python command-line app and a web version on GitHub Pages. It shows a computer's current **public IPv4 and IPv6 addresses** and the details behind them: ISP, ASN, country code, geolocation and timezone. It also analyses any address you type in.
 
 ## Features
 
@@ -14,6 +14,7 @@ DEVASC Project Activity 3, Option 2. This is a Python command-line prototype for
 | 6 | Formatted, coloured output and a Google Maps link to the location | display layer |
 | 7 | JSON output (`--json`) and save to file (`--save`) for tickets and scripts | `save_results()` |
 | 8 | Interactive menu, or command-line flags for quick use | `interactive_menu()`, `main()` |
+| 9 | Web version with the same features, hosted on GitHub Pages | `docs/index.html`, `docs/style.css` |
 
 ## APIs used
 

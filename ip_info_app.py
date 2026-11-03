@@ -1,6 +1,6 @@
 """
-IPv4/IPv6 Address Application  (DEVASC Project Activity 3 - Option 2)
-=====================================================================
+IPeek: IPv4/IPv6 Address Application  (DEVASC Project Activity 3 - Option 2)
+============================================================================
 
 A command-line prototype for network technicians that shows the computer's
 current PUBLIC IP addressing information, using free REST APIs:
@@ -107,7 +107,7 @@ def get_public_ips():
 def _from_ipapi(ip):
     """Query ipapi.co and normalise the answer. Raises on error/rate-limit."""
     response = requests.get(IPAPI_URL.format(ip=ip), timeout=TIMEOUT,
-                            headers={"User-Agent": "devasc-ip-app/" + APP_VERSION})
+                            headers={"User-Agent": "ipeek/" + APP_VERSION})
     response.raise_for_status()
     data = response.json()
     if data.get("error"):                      # e.g. "RateLimited", "Reserved IP"
@@ -347,7 +347,7 @@ def save_results(data, path):
 # 5. CLI / MENU
 # ---------------------------------------------------------------------------
 MENU = """
-{b}IPv4/IPv6 Address Application v{v}{e}
+{b}IPeek v{v}: IPv4/IPv6 Address Application{e}
   1) Show my public IPv4 and IPv6 information
   2) Look up another IP address
   3) Save my public IP report to a file
