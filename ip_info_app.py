@@ -2,8 +2,10 @@
 IPeek: IPv4/IPv6 Address Application  (DEVASC Project Activity 3 - Option 2)
 ============================================================================
 
-A command-line prototype for network technicians that shows the computer's
-current PUBLIC IP addressing information, using free REST APIs:
+A prototype for network technicians that shows the computer's current PUBLIC
+IP addressing information, using free REST APIs. This file is the core app and
+the command-line interface; gui_app.py is a Tkinter desktop window that reuses
+the same functions. The REST APIs used are:
 
     * ipify  (https://www.ipify.org)  - returns the public IPv4 / IPv6 address
     * ipapi.co (https://ipapi.co)     - returns details for an IP address:
@@ -35,6 +37,8 @@ Code layout (for teams continuing this project)
 
 Each layer only talks to the one below it, so a new feature (e.g. a GUI or a
 new API) can be added by replacing one layer without touching the others.
+gui_app.py does exactly that: it replaces layers 4-5 with a Tkinter window and
+calls layers 2-3 unchanged.
 """
 
 import argparse
@@ -246,6 +250,21 @@ def build_report(ip):
     return {"analysis": analysis, "details": details}
 
 
+def get_my_report():
+    """Find this computer's public IPv4/IPv6 and build a report for each.
+
+    Used by both the CLI (show_my_ips) and the desktop GUI (gui_app.py).
+    """
+    ips = get_public_ips()
+    results = {"generated": datetime.now().isoformat(timespec="seconds"),
+               "public_ipv4": ips["ipv4"], "public_ipv6": ips["ipv6"],
+               "reports": []}
+    for ip in (ips["ipv4"], ips["ipv6"]):
+        if ip:
+            results["reports"].append(build_report(ip))
+    return results
+
+
 # ---------------------------------------------------------------------------
 # 4. DISPLAY LAYER
 # ---------------------------------------------------------------------------
@@ -298,20 +317,14 @@ def print_report(report):
 
 def show_my_ips(as_json=False, save_path=None):
     """Feature: look up and display this computer's public IPv4 and IPv6."""
-    ips = get_public_ips()
-    results = {"generated": datetime.now().isoformat(timespec="seconds"),
-               "public_ipv4": ips["ipv4"], "public_ipv6": ips["ipv6"],
-               "reports": []}
-    for ip in (ips["ipv4"], ips["ipv6"]):
-        if ip:
-            results["reports"].append(build_report(ip))
+    results = get_my_report()
 
     if as_json:
         print(json.dumps(results, indent=2))
     else:
         print_header("MY PUBLIC IP ADDRESSES")
-        print_row("Public IPv4", ips["ipv4"] or f"{Color.RED}not detected{Color.END}")
-        print_row("Public IPv6", ips["ipv6"] or
+        print_row("Public IPv4", results["public_ipv4"] or f"{Color.RED}not detected{Color.END}")
+        print_row("Public IPv6", results["public_ipv6"] or
                   f"{Color.YELLOW}not available (network has no IPv6){Color.END}")
         for report in results["reports"]:
             print_report(report)

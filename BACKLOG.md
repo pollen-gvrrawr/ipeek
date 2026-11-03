@@ -11,4 +11,4 @@ Items are in priority order (P1 is highest).
 | P3 | **Connectivity tests**: ping and traceroute to a chosen IP, with an IPv6 readiness check | Shows whether IPv6 really works end-to-end |
 | P3 | **History**: keep a log of past lookups and detect when the public IP changes | Helps track dynamic IP changes from an ISP |
 | P3 | **Caching and API-key support** (ipapi.co paid key, ipstack) | Avoids free-tier rate limits |
-| P3 | Package as a standalone `.exe` with PyInstaller | Technicians can run it without installing Python |
+| P3 | Package the CLI and the desktop GUI as standalone `.exe` files with PyInstaller | Technicians can run it without installing Python |

@@ -1,6 +1,6 @@
 # IPeek: IPv4/IPv6 Address Application
 
-DEVASC Project Activity 3, Option 2. IPeek is a prototype for network technicians, with a Python command-line app and a web version on GitHub Pages. It shows a computer's current **public IPv4 and IPv6 addresses** and the details behind them: ISP, ASN, country code, geolocation and timezone. It also analyses any address you type in.
+DEVASC Project Activity 3, Option 2. IPeek is a Python prototype for network technicians, with a command-line app and a desktop window (Tkinter) that share the same code. It shows a computer's current **public IPv4 and IPv6 addresses** and the details behind them: ISP, ASN, country code, geolocation and timezone. It also analyses any address you type in.
 
 ## Features
 
@@ -14,7 +14,7 @@ DEVASC Project Activity 3, Option 2. IPeek is a prototype for network technician
 | 6 | Formatted, coloured output and a Google Maps link to the location | display layer |
 | 7 | JSON output (`--json`) and save to file (`--save`) for tickets and scripts | `save_results()` |
 | 8 | Interactive menu, or command-line flags for quick use | `interactive_menu()`, `main()` |
-| 9 | Web version with the same features, hosted on GitHub Pages | `docs/index.html`, `docs/style.css` |
+| 9 | Desktop GUI with the same features: tabs, Refresh and Look up buttons, Save report and Open map | `gui_app.py` |
 
 ## APIs used
 
@@ -37,6 +37,8 @@ python ip_info_app.py --ip 8.8.8.8    # look up any address
 python ip_info_app.py --ip 2001:4860:4860::8888
 python ip_info_app.py --me --json     # raw JSON
 python ip_info_app.py --me --save report.json
+
+python gui_app.py                     # desktop window
 ```
 
 Run the tests. They work offline because the APIs are mocked:
@@ -45,17 +47,16 @@ Run the tests. They work offline because the APIs are mocked:
 python -m unittest discover -s tests -v
 ```
 
-## Web version (GitHub Pages)
+## Desktop GUI
 
-[`docs/index.html`](docs/index.html) is a browser version of the app: one HTML file with no build step and no dependencies. It has the same features as the Python app: your public IPv4/IPv6, details with the ipwho.is fallback, offline address analysis, lookup of any address, a map link, and JSON download. GitHub Pages can only serve static files and can't run Python, so the page calls the same APIs from the browser with JavaScript. Its code uses the same five layers as `ip_info_app.py`.
+[`gui_app.py`](gui_app.py) opens IPeek in a window. It has two tabs:
 
-To try it locally, open `docs/index.html` in a browser. Add `?ip=8.8.8.8` to the URL to look up an address straight away.
+* **My public IPs** shows your public IPv4 and IPv6 at the top, then the full report for each. **Refresh** looks them up again.
+* **Look up an IP** takes any IPv4 or IPv6 address, with example buttons for public, private and link-local addresses.
 
-To publish it:
+Both tabs can **Save report (JSON)** and **Open map** in your browser. The GUI has no networking or analysis code of its own. It calls `get_my_report()` and `build_report()` from `ip_info_app.py`, so the CLI and the GUI always give the same answers. Lookups run in a background thread, so the window doesn't freeze while it waits for an API.
 
-1. The repository must be **public**. GitHub Pages on a private repo needs a paid plan.
-2. Go to **Settings → Pages → Build and deployment**. Set *Source* to **Deploy from a branch**, *Branch* to **main** and *folder* to **/docs**, then click **Save**.
-3. After about a minute the site is live at `https://pollen-gvrrawr.github.io/ipeek/`.
+Tkinter comes with the standard Python installer on Windows and macOS. On Linux, install it with `sudo apt install python3-tk`.
 
 ## Code structure (for teams continuing the project)
 
@@ -66,6 +67,8 @@ To publish it:
 3. **Analysis layer**: offline facts from Python's `ipaddress` module.
 4. **Display layer**: formatting and printing only.
 5. **CLI / menu**: `argparse` flags and the interactive menu.
+
+`gui_app.py` replaces layers 4 and 5 with a Tkinter window and reuses layers 1 to 3 unchanged. To add another interface, follow the same pattern.
 
 ## Team workflow
 
