@@ -26,6 +26,7 @@ How to run
     python ip_info_app.py --ip 8.8.8.8    # look up any IPv4/IPv6 address
     python ip_info_app.py --me --json     # print raw JSON (for scripts)
     python ip_info_app.py --me --save report.json   # save results to a file
+    python ip_info_app.py --subnet 192.168.1.0/26   # subnet calculator
 
 Code layout (for teams continuing this project)
 -----------------------------------------------
@@ -50,6 +51,8 @@ from datetime import datetime
 
 import requests
 from colorama import Fore, Style, just_fix_windows_console
+
+import subnet_calc
 
 # ---------------------------------------------------------------------------
 # 1. CONFIG
@@ -349,6 +352,24 @@ def show_lookup(ip, as_json=False, save_path=None):
     return report
 
 
+def show_subnet(text, as_json=False, save_path=None):
+    """Feature: subnet calculator for an IPv4 or IPv6 network in CIDR notation."""
+    try:
+        info = subnet_calc.calculate_subnet(text)
+    except ValueError as exc:
+        print(f"{Color.RED}'{text}' is not a valid network: {exc}{Color.END}")
+        return None
+    if as_json:
+        print(json.dumps(info, indent=2))
+    else:
+        print_header(f"SUBNET CALCULATOR: {info['network']}")
+        for label, value in subnet_calc.subnet_rows(info):
+            print_row(label, value)
+    if save_path:
+        save_results(info, save_path)
+    return info
+
+
 def save_results(data, path):
     """Feature: save results to a .json or .txt file for ticket records."""
     with open(path, "w", encoding="utf-8") as fh:
@@ -364,6 +385,7 @@ MENU = """
   1) Show my public IPv4 and IPv6 information
   2) Look up another IP address
   3) Save my public IP report to a file
+  4) Subnet calculator (IPv4/IPv6)
   q) Quit
 """
 
@@ -384,8 +406,11 @@ def interactive_menu():
         elif choice == "3":
             name = input("File name [ip_report.json]: ").strip() or "ip_report.json"
             show_my_ips(save_path=name)
+        elif choice == "4":
+            text = input("Enter a network, e.g. 192.168.1.0/26 or 2001:db8::/64: ").strip()
+            show_subnet(text)
         else:
-            print(f"{Color.YELLOW}Please choose 1, 2, 3 or q.{Color.END}")
+            print(f"{Color.YELLOW}Please choose 1-4 or q.{Color.END}")
 
 
 def parse_args(argv=None):
@@ -393,6 +418,8 @@ def parse_args(argv=None):
         description="Show public IPv4/IPv6 addressing information for network technicians.")
     parser.add_argument("--me", action="store_true", help="show my public IPv4/IPv6 and exit")
     parser.add_argument("--ip", help="look up a specific IPv4 or IPv6 address and exit")
+    parser.add_argument("--subnet", metavar="CIDR",
+                        help="subnet calculator, e.g. 192.168.1.0/26 or 2001:db8::/64")
     parser.add_argument("--json", action="store_true", help="output raw JSON")
     parser.add_argument("--save", metavar="FILE", help="save the results to FILE (JSON)")
     parser.add_argument("--no-color", action="store_true", help="disable coloured output")
@@ -403,7 +430,9 @@ def main(argv=None):
     args = parse_args(argv)
     if args.no_color or args.json or not sys.stdout.isatty():
         Color.disable()
-    if args.ip:
+    if args.subnet:
+        show_subnet(args.subnet, as_json=args.json, save_path=args.save)
+    elif args.ip:
         show_lookup(args.ip, as_json=args.json, save_path=args.save)
     elif args.me:
         show_my_ips(as_json=args.json, save_path=args.save)
