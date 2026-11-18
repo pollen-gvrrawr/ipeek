@@ -28,6 +28,9 @@ How to run
     python ip_info_app.py --me --save report.json   # save results to a file
     python ip_info_app.py --subnet 192.168.1.0/26   # subnet calculator
     python ip_info_app.py --local                   # private IP, mask, gateway, DNS
+    python ip_info_app.py --ping 8.8.8.8            # ping a host
+    python ip_info_app.py --trace 8.8.8.8           # traceroute to a host
+    python ip_info_app.py --ipv6-check              # does IPv6 work end to end?
 
 Code layout (for teams continuing this project)
 -----------------------------------------------
@@ -53,6 +56,7 @@ from datetime import datetime
 import requests
 from colorama import Fore, Style, just_fix_windows_console
 
+import connectivity
 import local_network
 import subnet_calc
 
@@ -389,6 +393,78 @@ def show_local_network(as_json=False, save_path=None):
     return info
 
 
+def _run_check(work, text):
+    """Run a connectivity test; print a friendly message for a bad host name."""
+    try:
+        return work(text)
+    except ValueError as exc:
+        print(f"{Color.RED}{exc}.{Color.END}")
+        return None
+
+
+def _finish(data, as_json, save_path, show):
+    """Print data as JSON or with show(data), then save it if asked."""
+    if as_json:
+        print(json.dumps(data, indent=2))
+    else:
+        show(data)
+    if save_path:
+        save_results(data, save_path)
+    return data
+
+
+def show_ping(host, as_json=False, save_path=None):
+    """Feature: ping a host and show whether it answers and how fast."""
+    result = _run_check(connectivity.ping, host)
+    if result is None:
+        return None
+
+    def show(r):
+        print_header(f"PING {r['host']}")
+        if "error" in r:
+            print(f"  {Color.RED}{r['error']}{Color.END}")
+            return
+        ok = f"{Color.GREEN}Yes{Color.END}" if r["reachable"] else f"{Color.RED}No{Color.END}"
+        print_row("Reachable", ok)
+        print_row("Sent / received", f"{r['sent']} / {r['received']}")
+        print_row("Packet loss", None if r["loss_percent"] is None else f"{r['loss_percent']:g}%")
+        print_row("Average time", None if r["avg_ms"] is None else f"{r['avg_ms']:g} ms")
+    return _finish(result, as_json, save_path, show)
+
+
+def show_traceroute(host, as_json=False, save_path=None):
+    """Feature: list the routers (hops) between this computer and a host."""
+    if not as_json:
+        print(f"{Color.BLUE}Tracing the route to {host}. This can take up to a minute...{Color.END}")
+    result = _run_check(connectivity.traceroute, host)
+    if result is None:
+        return None
+
+    def show(r):
+        print_header(f"TRACEROUTE {r['host']}")
+        if "error" in r:
+            print(f"  {Color.RED}{r['error']}{Color.END}")
+        for hop in r["hops"]:
+            where = hop["address"] or f"{Color.YELLOW}* no reply{Color.END}"
+            time = f"  ({hop['ms']:g} ms)" if hop["ms"] is not None else ""
+            print_row(f"Hop {hop['hop']}", f"{where}{time}")
+    return _finish(result, as_json, save_path, show)
+
+
+def show_ipv6_check(as_json=False, save_path=None):
+    """Feature: IPv6 readiness check, step by step."""
+    result = connectivity.ipv6_readiness(lambda: get_public_ip(IPV6_URL))
+
+    def show(r):
+        print_header("IPv6 READINESS CHECK")
+        for check in r["checks"]:
+            mark = f"{Color.GREEN}PASS{Color.END}" if check["passed"] else f"{Color.RED}FAIL{Color.END}"
+            print(f"  [{mark}] {check['name']}: {check['detail']}")
+        colour = Color.GREEN if r["passed"] == r["total"] else Color.YELLOW
+        print(f"\n  {Color.BOLD}{colour}{r['verdict']} ({r['passed']}/{r['total']} checks){Color.END}")
+    return _finish(result, as_json, save_path, show)
+
+
 def save_results(data, path):
     """Feature: save results to a .json or .txt file for ticket records."""
     with open(path, "w", encoding="utf-8") as fh:
@@ -406,6 +482,9 @@ MENU = """
   3) Save my public IP report to a file
   4) Subnet calculator (IPv4/IPv6)
   5) Show my local network (private IP, gateway, DNS)
+  6) Ping a host
+  7) Traceroute to a host
+  8) IPv6 readiness check
   q) Quit
 """
 
@@ -431,8 +510,13 @@ def interactive_menu():
             show_subnet(text)
         elif choice == "5":
             show_local_network()
+        elif choice in ("6", "7"):
+            host = input("Enter an IP address or hostname [8.8.8.8]: ").strip() or "8.8.8.8"
+            (show_ping if choice == "6" else show_traceroute)(host)
+        elif choice == "8":
+            show_ipv6_check()
         else:
-            print(f"{Color.YELLOW}Please choose 1-5 or q.{Color.END}")
+            print(f"{Color.YELLOW}Please choose 1-8 or q.{Color.END}")
 
 
 def parse_args(argv=None):
@@ -444,6 +528,10 @@ def parse_args(argv=None):
                         help="subnet calculator, e.g. 192.168.1.0/26 or 2001:db8::/64")
     parser.add_argument("--local", action="store_true",
                         help="show my private IP, subnet mask, gateway and DNS servers")
+    parser.add_argument("--ping", metavar="HOST", help="ping an IP address or hostname")
+    parser.add_argument("--trace", metavar="HOST", help="traceroute to an IP address or hostname")
+    parser.add_argument("--ipv6-check", action="store_true",
+                        help="check whether IPv6 works end to end")
     parser.add_argument("--json", action="store_true", help="output raw JSON")
     parser.add_argument("--save", metavar="FILE", help="save the results to FILE (JSON)")
     parser.add_argument("--no-color", action="store_true", help="disable coloured output")
@@ -458,6 +546,12 @@ def main(argv=None):
         show_subnet(args.subnet, as_json=args.json, save_path=args.save)
     elif args.local:
         show_local_network(as_json=args.json, save_path=args.save)
+    elif args.ping:
+        show_ping(args.ping, as_json=args.json, save_path=args.save)
+    elif args.trace:
+        show_traceroute(args.trace, as_json=args.json, save_path=args.save)
+    elif args.ipv6_check:
+        show_ipv6_check(as_json=args.json, save_path=args.save)
     elif args.ip:
         show_lookup(args.ip, as_json=args.json, save_path=args.save)
     elif args.me:
