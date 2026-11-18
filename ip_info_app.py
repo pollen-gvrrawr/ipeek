@@ -27,6 +27,7 @@ How to run
     python ip_info_app.py --me --json     # print raw JSON (for scripts)
     python ip_info_app.py --me --save report.json   # save results to a file
     python ip_info_app.py --subnet 192.168.1.0/26   # subnet calculator
+    python ip_info_app.py --local                   # private IP, mask, gateway, DNS
 
 Code layout (for teams continuing this project)
 -----------------------------------------------
@@ -52,6 +53,7 @@ from datetime import datetime
 import requests
 from colorama import Fore, Style, just_fix_windows_console
 
+import local_network
 import subnet_calc
 
 # ---------------------------------------------------------------------------
@@ -370,6 +372,23 @@ def show_subnet(text, as_json=False, save_path=None):
     return info
 
 
+def show_local_network(as_json=False, save_path=None):
+    """Feature: this computer's private IP, subnet mask, gateway and DNS servers."""
+    info = local_network.get_local_network()
+    if as_json:
+        print(json.dumps(info, indent=2))
+    else:
+        print_header("MY LOCAL NETWORK")
+        if "error" in info:
+            print(f"  {Color.RED}{info['error']}{Color.END}")
+        else:
+            for label, value in local_network.local_rows(info):
+                print_row(label, value)
+    if save_path:
+        save_results(info, save_path)
+    return info
+
+
 def save_results(data, path):
     """Feature: save results to a .json or .txt file for ticket records."""
     with open(path, "w", encoding="utf-8") as fh:
@@ -386,6 +405,7 @@ MENU = """
   2) Look up another IP address
   3) Save my public IP report to a file
   4) Subnet calculator (IPv4/IPv6)
+  5) Show my local network (private IP, gateway, DNS)
   q) Quit
 """
 
@@ -409,8 +429,10 @@ def interactive_menu():
         elif choice == "4":
             text = input("Enter a network, e.g. 192.168.1.0/26 or 2001:db8::/64: ").strip()
             show_subnet(text)
+        elif choice == "5":
+            show_local_network()
         else:
-            print(f"{Color.YELLOW}Please choose 1-4 or q.{Color.END}")
+            print(f"{Color.YELLOW}Please choose 1-5 or q.{Color.END}")
 
 
 def parse_args(argv=None):
@@ -420,6 +442,8 @@ def parse_args(argv=None):
     parser.add_argument("--ip", help="look up a specific IPv4 or IPv6 address and exit")
     parser.add_argument("--subnet", metavar="CIDR",
                         help="subnet calculator, e.g. 192.168.1.0/26 or 2001:db8::/64")
+    parser.add_argument("--local", action="store_true",
+                        help="show my private IP, subnet mask, gateway and DNS servers")
     parser.add_argument("--json", action="store_true", help="output raw JSON")
     parser.add_argument("--save", metavar="FILE", help="save the results to FILE (JSON)")
     parser.add_argument("--no-color", action="store_true", help="disable coloured output")
@@ -432,6 +456,8 @@ def main(argv=None):
         Color.disable()
     if args.subnet:
         show_subnet(args.subnet, as_json=args.json, save_path=args.save)
+    elif args.local:
+        show_local_network(as_json=args.json, save_path=args.save)
     elif args.ip:
         show_lookup(args.ip, as_json=args.json, save_path=args.save)
     elif args.me:
