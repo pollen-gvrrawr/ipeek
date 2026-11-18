@@ -1,5 +1,7 @@
 # IPeek: IPv4/IPv6 Address Application
 
+[![tests](https://github.com/pollen-gvrrawr/ipeek/actions/workflows/tests.yml/badge.svg)](https://github.com/pollen-gvrrawr/ipeek/actions/workflows/tests.yml)
+
 DEVASC Project Activity 3, Option 2. IPeek is a Python prototype for network technicians, with a command-line app and a desktop window (Tkinter) that share the same code. It shows a computer's current **public IPv4 and IPv6 addresses** and the details behind them: ISP, ASN, country code, geolocation and timezone. It also analyses any address you type in.
 
 ## Features
@@ -89,6 +91,7 @@ New Project Activity 4 features each live in their own module, so team members c
 
 * `main` holds the reviewed, working version of the app.
 * Each member works on a branch named `feature/<name>-<task>`. They open a **pull request**, another member reviews it, and it is merged into `main`.
+* **CI pipeline (GitHub Actions):** [`.github/workflows/tests.yml`](.github/workflows/tests.yml) runs every unit test on Windows and Linux on each push and pull request. `main` is protected: a pull request can only be merged when both test jobs pass.
 * Future work is listed in [BACKLOG.md](BACKLOG.md).
 
 ## Team
