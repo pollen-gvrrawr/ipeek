@@ -17,6 +17,7 @@ DEVASC Project Activity 3, Option 2. IPeek is a Python prototype for network tec
 | 9 | Desktop GUI with the same features: tabs, Refresh and Look up buttons, Save report and Open map | `gui_app.py` |
 | 10 | Subnet calculator for IPv4 and IPv6: mask, wildcard, broadcast, first/last usable host and host count | `subnet_calc.py` |
 | 11 | Local network info: private IPv4, subnet mask, network, default gateway and DNS servers (Windows, Linux, macOS) | `local_network.py` |
+| 12 | Connectivity tests: ping and traceroute to any host, and an IPv6 readiness check that shows whether IPv6 works end to end | `connectivity.py` |
 
 ## APIs used
 
@@ -42,6 +43,9 @@ python ip_info_app.py --me --save report.json
 python ip_info_app.py --subnet 192.168.1.0/26        # subnet calculator
 python ip_info_app.py --subnet 2001:db8:abcd:12::/64
 python ip_info_app.py --local                        # private IP, mask, gateway, DNS
+python ip_info_app.py --ping 8.8.8.8                 # ping a host
+python ip_info_app.py --trace 8.8.8.8                # traceroute to a host
+python ip_info_app.py --ipv6-check                   # does IPv6 work end to end?
 
 python gui_app.py                     # desktop window
 ```
@@ -79,6 +83,7 @@ New Project Activity 4 features each live in their own module, so team members c
 
 * `subnet_calc.py`: subnet calculator (offline, `ipaddress` module).
 * `local_network.py`: local network info. It reads the operating system's own tools (`ipconfig`, `ip`, `ifconfig`); the parsers are tested with sample output from each system.
+* `connectivity.py`: ping, traceroute and the IPv6 readiness check. It runs the system's `ping`/`tracert`/`traceroute` without a shell, and checks the host name first so it can't be used to inject commands.
 
 ## Team workflow
 
