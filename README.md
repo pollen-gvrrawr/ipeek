@@ -15,6 +15,7 @@ DEVASC Project Activity 3, Option 2. IPeek is a Python prototype for network tec
 | 7 | JSON output (`--json`) and save to file (`--save`) for tickets and scripts | `save_results()` |
 | 8 | Interactive menu, or command-line flags for quick use | `interactive_menu()`, `main()` |
 | 9 | Desktop GUI with the same features: tabs, Refresh and Look up buttons, Save report and Open map | `gui_app.py` |
+| 10 | Subnet calculator for IPv4 and IPv6: mask, wildcard, broadcast, first/last usable host and host count | `subnet_calc.py` |
 
 ## APIs used
 
@@ -37,6 +38,8 @@ python ip_info_app.py --ip 8.8.8.8    # look up any address
 python ip_info_app.py --ip 2001:4860:4860::8888
 python ip_info_app.py --me --json     # raw JSON
 python ip_info_app.py --me --save report.json
+python ip_info_app.py --subnet 192.168.1.0/26        # subnet calculator
+python ip_info_app.py --subnet 2001:db8:abcd:12::/64
 
 python gui_app.py                     # desktop window
 ```
@@ -69,6 +72,10 @@ Tkinter comes with the standard Python installer on Windows and macOS. On Linux,
 5. **CLI / menu**: `argparse` flags and the interactive menu.
 
 `gui_app.py` replaces layers 4 and 5 with a Tkinter window and reuses layers 1 to 3 unchanged. To add another interface, follow the same pattern.
+
+New Project Activity 4 features each live in their own module, so team members can work on them in parallel without editing the same code. `ip_info_app.py` only adds a flag and a menu option for each:
+
+* `subnet_calc.py`: subnet calculator (offline, `ipaddress` module).
 
 ## Team workflow
 
