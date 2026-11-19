@@ -23,7 +23,9 @@ Code layout
     * batch_report_rows()        - one batch result -> report rows (Reports view)
     * batch_table_values()       - one batch result -> table cells (Table view)
     * whois_report_rows() / whois_table_values() - the same for a batch
-                                   reverse DNS / WHOIS (BATCH_MODES picks which)
+                                   reverse DNS / WHOIS, and both_report_rows() /
+                                   both_table_values() for both lookups
+                                   (BATCH_MODES picks which)
     * whois tab                  - reverse_whois.lookup_rows() in a ResultPane
     * IPeekApp                   - the window: header, four tabs, status bar
     * lookups run in a background thread so the window never freezes while
@@ -108,27 +110,35 @@ def map_url(reports):
     return None
 
 
+def _batch_extra_rows(row):
+    """Rows shown under each address's title in a batch: how often it was in
+    the file, and the hostname(s) it came from (with Resolve hostnames)."""
+    rows = [("row", "Times seen in file", row["count"])]
+    if row.get("from_hostname"):
+        rows.append(("row", "From hostname in file", row["from_hostname"]))
+    return rows
+
+
 def batch_report_rows(row, report=None):
     """Rows for one address in the Batch lookup tab.
 
-    The same vertical layout as the single-IP report (report_rows), with an
-    extra "Times seen in file" row under the title. row is a batch_lookup
-    result row; report is the full build_report() dict, or None if the lookup
-    crashed.
+    The same vertical layout as the single-IP report (report_rows), with
+    "Times seen in file" (and "From hostname in file") under the title. row
+    is a batch_lookup result row; report is the full build_report() dict, or
+    None if the lookup crashed.
     """
-    seen = ("row", "Times seen in file", row["count"])
     if report is None:
-        return [("title", f"Address: {row['ip']}", ""), seen,
-                ("error", "", f"Lookup failed: {row['error']}")]
+        return ([("title", f"Address: {row['ip']}", "")] + _batch_extra_rows(row)
+                + [("error", "", f"Lookup failed: {row['error']}")])
     rows = report_rows(report)
-    rows.insert(1, seen)
+    rows[1:1] = _batch_extra_rows(row)
     return rows
 
 
 # Table view of the batch tab: (column id, heading, width), same rows and
 # order as the single-IP report.
 BATCH_COLUMNS = (
-    ("ip", "IP address", 210), ("count", "Seen", 50),
+    ("ip", "IP address", 210), ("count", "Seen", 50), ("from_hostname", "From hostname", 160),
     # Address analysis
     ("version", "Version", 65), ("scope", "Scope", 250), ("class", "Class", 55),
     ("binary", "Binary", 300), ("compressed", "Compressed", 210),
@@ -152,6 +162,12 @@ def batch_table_values(row):
     N/A, as in the report. Returns (values, failed); failed is True when a
     public address could not be looked up online, so the window can colour it.
     """
+    cells, failed = _ip_cells(row)
+    return tuple(cells[c] for c, _, _ in BATCH_COLUMNS), failed
+
+
+def _ip_cells(row):
+    """The IP-details cells of a batch row, formatted for the table; (cells, failed)."""
     scope = row["scope"] or "?"
     failed = bool(row["error"]) and (scope.startswith("Public") or scope == "?")
     looked_up = not row["error"]
@@ -170,23 +186,32 @@ def batch_table_values(row):
     if looked_up:
         for column in _ONLINE:
             cells[column] = cells[column] or "N/A"
-    return tuple(cells[c] for c, _, _ in BATCH_COLUMNS), failed
+    return cells, failed
 
 
 def whois_report_rows(row, result=None):
     """Rows for one address in a batch reverse DNS / WHOIS: the same layout as
     the Reverse DNS / WHOIS tab, with "Times seen in file" under the title."""
-    seen = ("row", "Times seen in file", row["count"])
     if result is None:
-        return [("title", f"Address: {row['ip']}", ""), seen,
-                ("error", "", f"Lookup failed: {row['whois_error']}")]
+        return ([("title", f"Address: {row['ip']}", "")] + _batch_extra_rows(row)
+                + [("error", "", f"Lookup failed: {row['whois_error']}")])
     rows = reverse_whois.lookup_rows(result)
-    rows.insert(1, seen)
+    rows[1:1] = _batch_extra_rows(row)
     return rows
 
 
+def both_report_rows(row, result=None):
+    """Rows for one address in a batch of both lookups: the IP-details report,
+    then the reverse DNS / WHOIS sections (without a second title)."""
+    if result is None:
+        return ([("title", f"Address: {row['ip']}", "")] + _batch_extra_rows(row)
+                + [("error", "", f"Lookup failed: {row['error'] or row['whois_error']}")])
+    return batch_report_rows(row, result["report"]) + reverse_whois.lookup_rows(
+        result["whois"])[1:]
+
+
 WHOIS_BATCH_COLUMNS = (
-    ("ip", "IP address", 210), ("count", "Seen", 50),
+    ("ip", "IP address", 210), ("count", "Seen", 50), ("from_hostname", "From hostname", 160),
     # Reverse DNS
     ("hostname", "Hostname", 230), ("forward_confirmed", "Forward-confirmed", 125),
     ("ptr_name", "PTR name", 300),
@@ -201,13 +226,38 @@ WHOIS_BATCH_COLUMNS = (
 
 def whois_table_values(row):
     """Cells of the batch table for one reverse DNS / WHOIS row; returns (values, failed)."""
+    cells, failed = _whois_cells(row)
+    return tuple(cells[c] for c, _, _ in WHOIS_BATCH_COLUMNS), failed
+
+
+def _whois_cells(row):
+    """The reverse DNS / WHOIS cells of a batch row; (cells, failed)."""
     not_public = batch_lookup.whois_not_public(row)
     failed = bool(row["whois_error"]) and not not_public
     cells = dict(row)
     cells["hostname"] = row["hostname"] or "no PTR record"
     cells["note"] = (row["whois_error"] if failed
                      else "no public WHOIS record (not public)" if not_public else "")
-    return tuple(cells[c] for c, _, _ in WHOIS_BATCH_COLUMNS), failed
+    return cells, failed
+
+
+# Both lookups: IP-details columns, then the reverse DNS / WHOIS ones
+BOTH_BATCH_COLUMNS = (
+    BATCH_COLUMNS[:-1]
+    + tuple(c for c in WHOIS_BATCH_COLUMNS[3:-1] if c[0] != "country")
+    + (("whois_country", "WHOIS country", 100), ("note", "Note", 330)))
+
+
+def both_table_values(row):
+    """Cells of the batch table for one row of both lookups; returns (values, failed)."""
+    cells, ip_failed = _ip_cells(row)
+    whois_cells, whois_failed = _whois_cells(row)
+    for column, _, _ in WHOIS_BATCH_COLUMNS[3:-1]:
+        if column != "country":
+            cells[column] = whois_cells[column]
+    notes = [n for n in (cells["note"], whois_cells["note"]) if n]
+    cells["note"] = "; ".join(dict.fromkeys(notes))          # no repeated notes
+    return tuple(cells[c] for c, _, _ in BOTH_BATCH_COLUMNS), ip_failed or whois_failed
 
 
 def _ip_summary(rows):
@@ -223,7 +273,14 @@ def _whois_summary(rows):
             f"lookup(s)."), s["failed"]
 
 
-# What changes between the two kinds of batch lookup in the Batch lookup tab
+def _both_summary(rows):
+    ip_text, ip_failed = _ip_summary(rows)
+    s = batch_lookup.summarize_whois(rows)
+    return (ip_text[:-1] + f"; {s['hostnames']} with a hostname, {s['owners']} with a network "
+            f"owner, {s['failed']} failed WHOIS lookup(s)."), ip_failed + s["failed"]
+
+
+# What changes between the three kinds of batch lookup in the Batch lookup tab
 BATCH_MODES = {
     "ip": {"columns": BATCH_COLUMNS, "values": batch_table_values,
            "report_rows": batch_report_rows, "to_row": batch_lookup.result_row,
@@ -233,6 +290,10 @@ BATCH_MODES = {
               "report_rows": whois_report_rows, "to_row": batch_lookup.whois_row,
               "csv_columns": batch_lookup.WHOIS_COLUMNS, "suffix": "_whois",
               "summary": _whois_summary},
+    "both": {"columns": BOTH_BATCH_COLUMNS, "values": both_table_values,
+             "report_rows": both_report_rows, "to_row": batch_lookup.both_row,
+             "csv_columns": batch_lookup.BOTH_COLUMNS, "suffix": "_both",
+             "summary": _both_summary},
 }
 
 
@@ -463,20 +524,28 @@ class IPeekApp(tk.Tk):
         self.batch_run_btn = ttk.Button(row, text="Run lookup", style="Primary.TButton",
                                         command=self.run_batch, state="disabled")
         self.batch_run_btn.pack(side="left", padx=(8, 0))
-        # Look up: IP details (as in the Look up tab) or Reverse DNS / WHOIS
+        # Look up: IP details (as in the Look up tab), Reverse DNS / WHOIS, or both
         ttk.Label(row, text="Look up:", foreground=MUTED).pack(side="left", padx=(16, 6))
         self.batch_mode = tk.StringVar(value="ip")
         self.batch_result_mode = "ip"         # the mode of the results on screen
         self.batch_mode_btns = [
             ttk.Radiobutton(row, text=text, value=value, variable=self.batch_mode,
                             style="Toolbutton", command=self.set_batch_mode)
-            for value, text in (("ip", "IP details"), ("whois", "Reverse DNS / WHOIS"))]
+            for value, text in (("ip", "IP details"), ("whois", "Reverse DNS / WHOIS"),
+                                ("both", "Both"))]
         for button in self.batch_mode_btns:
             button.pack(side="left")
         self.batch_export_btn = ttk.Button(row, text="Export CSV", command=self.export_batch,
                                            state="disabled")
         self.batch_export_btn.pack(side="right")
         row.pack(fill="x")
+
+        # Optional: also read hostnames (dns.google...) and look up their IPs
+        self.batch_hostnames = tk.BooleanVar(value=False)
+        self.batch_hostnames_box = ttk.Checkbutton(
+            tab, text="Resolve hostnames in the file (e.g. dns.google) and look up their IPs",
+            variable=self.batch_hostnames, command=self._batch_hostnames_changed)
+        self.batch_hostnames_box.pack(anchor="w", pady=(8, 0))
 
         self.batch_info = ttk.Label(tab, foreground=MUTED, wraplength=700, justify="left",
                                     text="Choose a .txt or .csv file with IP addresses, for "
@@ -713,8 +782,8 @@ class IPeekApp(tk.Tk):
         self.batch_result_mode = self.batch_mode.get()
         self.batch_progress.configure(value=0)
         self.batch_export_btn.state(["disabled"])
-        what = ("hostname and network owner" if self.batch_result_mode == "whois"
-                else "IP details")
+        what = {"ip": "IP details", "whois": "hostname and network owner",
+                "both": "IP details, hostname and network owner"}[self.batch_result_mode]
         self.batch_pane.clear(f"Press Run lookup to look up the {what} of every address "
                               "in the file." if self.batch_entries else
                               "The report for each address will appear here, one after "
@@ -728,10 +797,16 @@ class IPeekApp(tk.Tk):
         if path:
             self.load_batch_file(path)
 
+    def _batch_hostnames_changed(self):
+        """Re-read the loaded file, with or without its hostnames."""
+        if self.batch_path:
+            self.load_batch_file(self.batch_path)
+
     def load_batch_file(self, path):
         """Read the file (fast, offline) and show how many addresses it has."""
+        hostnames = self.batch_hostnames.get()
         try:
-            entries, skipped = batch_lookup.read_ip_file(path)
+            entries, skipped = batch_lookup.read_ip_file(path, hostnames)
         except OSError as exc:
             self.batch_info.configure(text=f"Could not read the file: {exc}", foreground=ERR)
             return
@@ -742,13 +817,16 @@ class IPeekApp(tk.Tk):
         self.batch_progress.configure(value=0)
         self.batch_export_btn.state(["disabled"])
         name = path.replace("\\", "/").split("/")[-1]
+        what = "IP addresses or hostnames" if hostnames else "IP addresses"
         if not entries:
             self.batch_run_btn.state(["disabled"])
-            self.batch_info.configure(text=f"No IP addresses found in {name}.", foreground=WARN)
+            self.batch_info.configure(text=f"No {what} found in {name}.", foreground=WARN)
             return
-        text = f"{name}: {len(entries)} unique IP address(es) found."
+        names = sum(1 for t, _ in entries if batch_lookup.is_hostname(t))
+        text = f"{name}: {len(entries) - names} unique IP address(es)"
+        text += f" and {names} hostname(s) found." if hostnames else " found."
         if skipped:
-            text += f" Skipped {len(skipped)} line(s) with no IP address."
+            text += f" Skipped {len(skipped)} line(s) with no {what[:-2]}."
         self.batch_info.configure(text=text + " Press Run lookup to start.", foreground=MUTED)
         self.batch_run_btn.state(["!disabled"])
 
@@ -757,7 +835,7 @@ class IPeekApp(tk.Tk):
             return
         self.batch_run_btn.state(["disabled"])
         self.batch_export_btn.state(["disabled"])
-        for button in self.batch_mode_btns:
+        for button in self.batch_mode_btns + [self.batch_hostnames_box]:
             button.state(["disabled"])
         self.batch_pane.clear(f"Looking up {len(self.batch_entries)} address(es)...")
         self.batch_table.delete(*self.batch_table.get_children())
@@ -769,38 +847,43 @@ class IPeekApp(tk.Tk):
             self._results.put((self._batch_progress, (done, total, ip), None))
 
         mode = self.batch_mode.get()
+        cache = reverse_whois.WhoisCache()        # one WHOIS query per network
         if mode == "whois":
-            cache = reverse_whois.WhoisCache()    # one WHOIS query per network
             run = lambda ip: reverse_whois.lookup(ip, cache)  # noqa: E731
+        elif mode == "both":
+            run = lambda ip: {"report": core.build_report(ip),  # noqa: E731
+                              "whois": reverse_whois.lookup(ip, cache)}
         else:
             run = core.build_report
 
         def work():
             reports = {}
+            # hostnames -> IPs (DNS can be slow, so this runs in the worker thread too)
+            resolved, unresolved = batch_lookup.resolve_entries(entries)
 
             def lookup(ip):                   # keep each full report for display
                 reports[ip] = run(ip)
                 return reports[ip]
-            rows = batch_lookup.run_batch(entries, lookup, progress,
+            rows = batch_lookup.run_batch(resolved, lookup, progress,
                                           to_row=BATCH_MODES[mode]["to_row"])
-            return mode, rows, reports
+            return mode, rows, reports, unresolved
 
         self._run(work, self.show_batch)
 
     def _batch_progress(self, step, _error=None):
         done, total, ip = step
-        self.batch_progress.configure(value=done)
+        self.batch_progress.configure(maximum=total, value=done)   # hostnames add IPs
         self.set_status(f"Batch lookup {done}/{total}: {ip}")
 
     def show_batch(self, result, error=None):
         self.batch_run_btn.state(["!disabled"])
-        for button in self.batch_mode_btns:
+        for button in self.batch_mode_btns + [self.batch_hostnames_box]:
             button.state(["!disabled"])
         if error:
             self.batch_info.configure(text=f"Batch lookup failed: {error}", foreground=ERR)
             self.set_status("Batch lookup failed")
             return
-        mode, rows, reports = result
+        mode, rows, reports, unresolved = result
         self.batch_rows, self.batch_result_mode = rows, mode
         m = BATCH_MODES[mode]
         lines = []
@@ -811,8 +894,12 @@ class IPeekApp(tk.Tk):
         self.batch_pane.show_rows(lines, data={"input": self.batch_path,
                                                "reports": list(reports.values())})
         summary, failed_count = m["summary"](rows)
+        if unresolved:
+            listed = ", ".join(n for n, _ in unresolved[:5]) + (" ..." if len(unresolved) > 5
+                                                                 else "")
+            summary += f" Could not resolve {len(unresolved)} hostname(s): {listed}."
         self.batch_info.configure(text=summary + " Press Export CSV to save the results.",
-                                  foreground=ERR if failed_count else MUTED)
+                                  foreground=ERR if failed_count or unresolved else MUTED)
         self.batch_export_btn.state(["!disabled"])
         self.set_status("Batch lookup finished")
         self.find_update()                    # re-apply a search typed earlier

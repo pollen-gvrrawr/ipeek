@@ -16,3 +16,4 @@ dist/
 *_results.csv
 report.csv
 *_whois.csv
+*_both.csv

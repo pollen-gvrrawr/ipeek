@@ -191,5 +191,117 @@ class HighlightTests(unittest.TestCase):
         self.assertEqual(app.highlight("abc", ""), ("abc", 0))
 
 
+def fake_whois(ip, cache=None):
+    """Offline stand-in for reverse_whois.lookup."""
+    if not app.analyze_ip(ip)["scope"].startswith("Public"):
+        return {"ip": ip, "ptr_name": "x.arpa",
+                "dns": {"hostname": None, "aliases": [], "forward_confirmed": None,
+                        "error": "no PTR record"},
+                "whois_error": "not a public address, so it has no public WHOIS record"}
+    return {"ip": ip, "ptr_name": "x.arpa",
+            "dns": {"hostname": "dns.google", "aliases": [], "forward_confirmed": True,
+                    "error": None},
+            "whois": {"owner": "Google LLC", "network_name": "GOGL", "range": "8.8.8.0 - 8.8.8.255",
+                      "cidr": "8.8.8.0/24", "type": "DIRECT ALLOCATION", "country": None,
+                      "abuse_email": "network-abuse@google.com", "registered": "2023-12-28",
+                      "last_changed": "2023-12-28", "registry": "ARIN (North America)",
+                      "source": "https://rdap.arin.net/registry/ip/8.8.8.8"}}
+
+
+def fake_resolver(name):
+    table = {"dns.google": ["8.8.8.8", "8.8.4.4"], "one.one.one.one": ["1.1.1.1"]}
+    if name not in table:
+        raise OSError("the name does not exist or has no address")
+    return table[name]
+
+
+class HostnameTests(unittest.TestCase):
+    def test_hostnames_are_read_only_when_asked(self):
+        lines = ["host,ip", "dns.google,8.8.8.8", "HELO One.One.One.One.", "10:00 2026-11-19"]
+        self.assertEqual(batch_lookup.extract_ips(lines)[0], [("8.8.8.8", 1)])
+        entries, skipped = batch_lookup.extract_ips(lines, hostnames=True)
+        self.assertEqual(entries, [("dns.google", 1), ("8.8.8.8", 1), ("one.one.one.one", 1)])
+        self.assertEqual(skipped, [(4, "10:00 2026-11-19")])     # times/dates aren't names
+
+    def test_not_hostnames(self):
+        for text in ("TCP", "v1.2", "10.0.0", "2026-11-19", "-bad-.com", "a..b.com"):
+            with self.subTest(text=text):
+                self.assertIsNone(batch_lookup._parse_hostname(text))
+
+    def test_resolve_merges_counts_and_reports_failures(self):
+        entries = [("8.8.8.8", 1), ("dns.google", 2), ("nope.invalid", 1), ("10.0.0.5", 1)]
+        resolved, unresolved = batch_lookup.resolve_entries(entries, fake_resolver)
+        self.assertEqual(resolved, [("8.8.8.8", 3, ("dns.google",)),
+                                    ("8.8.4.4", 2, ("dns.google",)),
+                                    ("10.0.0.5", 1, ())])
+        self.assertEqual(unresolved, [("nope.invalid",
+                                       "the name does not exist or has no address")])
+
+    def test_run_batch_fills_from_hostname(self):
+        rows = batch_lookup.run_batch([("8.8.8.8", 3, ("dns.google",)), ("10.0.0.5", 1, ())],
+                                      fake_build_report)
+        self.assertEqual([r["from_hostname"] for r in rows], ["dns.google", ""])
+
+    def test_resolve_hostname_failure(self):
+        with mock.patch.object(batch_lookup.socket, "getaddrinfo",
+                               side_effect=batch_lookup.socket.gaierror(11001)), \
+                self.assertRaisesRegex(OSError, "does not exist"):
+            batch_lookup.resolve_hostname("nope.invalid")
+
+
+class BothModeTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.src = os.path.join(self.tmp.name, "mixed.csv")
+        with open(self.src, "w", encoding="utf-8") as fh:
+            fh.write("purpose,value\nip details,8.8.8.8\nreverse dns,dns.google\n"
+                     "bad,nope.invalid\nprivate,192.168.1.1\n")
+
+    def test_both_row_keeps_both_countries(self):
+        row = batch_lookup.both_row("8.8.8.8", 1, {"report": fake_build_report("8.8.8.8"),
+                                                   "whois": fake_whois("8.8.8.8")})
+        self.assertEqual(list(row), list(batch_lookup.BOTH_COLUMNS))
+        self.assertEqual((row["isp"], row["country"]), ("GOOGLE", "United States"))
+        self.assertEqual((row["owner"], row["hostname"]), ("Google LLC", "dns.google"))
+        self.assertEqual(row["whois_source"], "https://rdap.arin.net/registry/ip/8.8.8.8")
+        self.assertEqual(row["source"], "ipapi.co")
+
+    def run_cli(self, *args):
+        with mock.patch.object(app, "build_report", side_effect=fake_build_report), \
+                mock.patch.object(app.reverse_whois, "lookup", side_effect=fake_whois), \
+                mock.patch.object(batch_lookup, "resolve_hostname", side_effect=fake_resolver), \
+                redirect_stdout(io.StringIO()) as out:
+            app.main(["--no-color", *args])
+        return out.getvalue()
+
+    def test_cli_batch_both_with_hostnames(self):
+        text = self.run_cli("--batch-both", self.src, "--resolve-hostnames")
+        self.assertIn("BATCH IP DETAILS + REVERSE DNS / WHOIS", text)
+        self.assertIn("ISP / Organization", text)          # IP-details report ...
+        self.assertIn("Reverse DNS (hostname)", text)      # ... and the WHOIS sections
+        self.assertIn("From hostname in file : dns.google", text)
+        self.assertIn("(from dns.google)", text)
+        self.assertIn("Could not resolve 1 hostname(s): nope.invalid", text)
+        with open(os.path.join(self.tmp.name, "mixed_both.csv"), encoding="utf-8-sig") as fh:
+            rows = list(csv.DictReader(fh))
+        self.assertEqual([r["ip"] for r in rows], ["8.8.8.8", "8.8.4.4", "192.168.1.1"])
+        self.assertEqual((rows[0]["count"], rows[0]["from_hostname"]), ("2", "dns.google"))
+        self.assertEqual((rows[0]["isp"], rows[0]["owner"]), ("GOOGLE", "Google LLC"))
+
+    def test_without_resolve_hostnames_names_are_skipped(self):
+        text = self.run_cli("--batch-whois", self.src, "--brief")
+        self.assertIn("2 unique address(es)", text)
+        self.assertIn("Skipped 2 line(s) with no IP address", text)
+        self.assertNotIn("Could not resolve", text)
+
+    def test_json_lists_unresolved_hostnames(self):
+        data = json.loads(self.run_cli("--batch", self.src, "--resolve-hostnames", "--json",
+                                       "--out", os.path.join(self.tmp.name, "o.csv")))
+        self.assertEqual(data["mode"], "ip")
+        self.assertEqual(list(data["unresolved_hostnames"]), ["nope.invalid"])
+        self.assertTrue(data["summary"].startswith("3 unique address(es)"))
+
+
 if __name__ == "__main__":
     unittest.main()

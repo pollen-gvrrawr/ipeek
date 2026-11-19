@@ -1,0 +1,19 @@
+# Sample list with hostnames AND IP addresses, for --resolve-hostnames
+#   python ip_info_app.py --batch-both samples/hostnames.txt --resolve-hostnames
+# Without --resolve-hostnames, only the IP addresses are read and the
+# hostname-only lines are reported as skipped.
+
+# Hostnames: each is resolved to its IP addresses (IPv4, and IPv6 if your
+# network has it), then every address is looked up
+dns.google
+one.one.one.one
+dns9.quad9.net
+
+# An IP that dns.google also resolves to: looked up once, counted twice
+8.8.8.8
+
+# A private address
+192.168.1.1
+
+# A name that doesn't exist: reported as "could not resolve"
+nope.invalid

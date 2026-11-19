@@ -238,7 +238,64 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.app.batch_table.get_children(), ())
         self.assertEqual(self.app.batch_rows, [])
         self.assertIn("disabled", self.app.batch_export_btn.state())
-        self.assertEqual(self.app.batch_table["columns"][2], "hostname")
+        self.assertEqual(self.app.batch_table["columns"][3], "hostname")   # after From hostname
+
+    def test_batch_both_mode_with_hostnames(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "mixed.txt")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("8.8.8.8\ndns.google\nnope.invalid\n")
+            self.app.load_batch_file(path)
+            self.assertEqual(self.app.batch_entries, [("8.8.8.8", 1)])   # names off
+            self.app.batch_hostnames.set(True)
+            self.app._batch_hostnames_changed()                          # re-reads the file
+        self.assertIn("1 unique IP address(es) and 2 hostname(s) found",
+                      self.app.batch_info.cget("text"))
+        self.app.batch_mode.set("both")
+        self.app.set_batch_mode()
+
+        def report(ip):
+            return {"analysis": core.analyze_ip(ip), "details": dict(DETAILS, ip=ip)}
+
+        def whois(ip, cache=None):
+            return {"ip": ip, "ptr_name": "x.arpa",
+                    "dns": {"hostname": "dns.google", "aliases": [], "forward_confirmed": True,
+                            "error": None},
+                    "whois": {"owner": "Google LLC", "network_name": "GOGL",
+                              "range": "8.8.8.0 - 8.8.8.255", "cidr": "8.8.8.0/24",
+                              "type": "DIRECT ALLOCATION", "country": None,
+                              "abuse_email": "network-abuse@google.com",
+                              "registered": "2023-12-28", "last_changed": "2023-12-28",
+                              "registry": "ARIN (North America)", "source": "https://rdap"}}
+
+        def resolver(name):
+            if name == "dns.google":
+                return ["8.8.8.8", "8.8.4.4"]
+            raise OSError("the name does not exist or has no address")
+        with mock.patch.object(core, "build_report", side_effect=report), \
+                mock.patch.object(gui_app.reverse_whois, "lookup", side_effect=whois), \
+                mock.patch.object(gui_app.batch_lookup, "resolve_hostname", side_effect=resolver):
+            self.app.run_batch()
+            while True:
+                done, value, error = self.app._results.get(timeout=5)
+                done(value, error)
+                if done == self.app.show_batch:
+                    break
+        text = self.pane_text(self.app.batch_pane)
+        for expected in ("ISP / Organization", "GOOGLE", "Reverse DNS (hostname)", "Google LLC",
+                         "From hostname in file"):
+            self.assertIn(expected, text)
+        self.assertEqual(text.count("Address analysis"), 2)            # 8.8.8.8 and 8.8.4.4
+        columns = [c for c, _, _ in gui_app.BOTH_BATCH_COLUMNS]
+        rows = [dict(zip(columns, self.app.batch_table.item(i, "values")))
+                for i in self.app.batch_table.get_children()]
+        self.assertEqual((rows[0]["ip"], rows[0]["count"], rows[0]["from_hostname"]),
+                         ("8.8.8.8", "2", "dns.google"))
+        self.assertEqual((rows[0]["isp"], rows[0]["owner"]), ("GOOGLE", "Google LLC"))
+        self.assertIn("Could not resolve 1 hostname(s): nope.invalid",
+                      self.app.batch_info.cget("text"))
+        self.assertEqual(self.app.batch_result_mode, "both")
 
     def test_whois_tab_shows_hostname_and_owner(self):
         result = {"ip": "8.8.8.8", "ptr_name": "8.8.8.8.in-addr.arpa",
