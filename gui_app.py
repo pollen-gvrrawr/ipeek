@@ -22,7 +22,8 @@ Code layout
                                    (no Tkinter, so they are easy to test)
     * batch_report_rows()        - one batch result -> report rows (Reports view)
     * batch_table_values()       - one batch result -> table cells (Table view)
-    * IPeekApp                   - the window: header, three tabs, status bar
+    * whois tab                  - reverse_whois.lookup_rows() in a ResultPane
+    * IPeekApp                   - the window: header, four tabs, status bar
     * lookups run in a background thread so the window never freezes while
       waiting for an API; results come back through a queue.
 """
@@ -35,6 +36,7 @@ from tkinter import filedialog, ttk
 
 import batch_lookup
 import ip_info_app as core
+import reverse_whois
 
 # ---------------------------------------------------------------------------
 # Look and feel (same palette as the IPeek slides)
@@ -272,7 +274,8 @@ class ResultPane(ttk.Frame):
 
 
 class IPeekApp(tk.Tk):
-    """Main window: header, 'My public IPs', 'Look up' and 'Batch lookup' tabs, status bar."""
+    """Main window: header, 'My public IPs', 'Look up', 'Batch lookup' and
+    'Reverse DNS / WHOIS' tabs, status bar."""
 
     def __init__(self, autoload=True):
         super().__init__()
@@ -334,6 +337,7 @@ class IPeekApp(tk.Tk):
         tabs.add(self._build_mine(tabs), text="My public IPs")
         tabs.add(self._build_lookup(tabs), text="Look up an IP")
         tabs.add(self._build_batch(tabs), text="Batch lookup")
+        tabs.add(self._build_whois(tabs), text="Reverse DNS / WHOIS")
         self.tabs = tabs
 
     def _build_mine(self, parent):
@@ -467,6 +471,31 @@ class IPeekApp(tk.Tk):
         self.batch_table_frame.rowconfigure(0, weight=1)
         self.batch_table_frame.columnconfigure(0, weight=1)
         self.set_batch_view()
+        return tab
+
+    def _build_whois(self, parent):
+        tab = ttk.Frame(parent, padding=12)
+        row = ttk.Frame(tab)
+        self.whois_entry = ttk.Entry(row, font=(MONO, 11))
+        self.whois_entry.pack(side="left", fill="x", expand=True)
+        self.whois_entry.bind("<Return>", lambda _e: self.whois_lookup())
+        self.whois_btn = ttk.Button(row, text="Look up owner", style="Primary.TButton",
+                                    command=self.whois_lookup)
+        self.whois_btn.pack(side="left", padx=(8, 0))
+        row.pack(fill="x")
+
+        examples = ttk.Frame(tab)
+        ttk.Label(examples, text="Try:", foreground=MUTED).pack(side="left")
+        for ip in ("8.8.8.8", "1.1.1.1", "193.0.6.139", "2001:4860:4860::8888"):
+            ttk.Button(examples, text=ip, command=lambda ip=ip: self.whois_lookup(ip)).pack(
+                side="left", padx=(6, 0))
+        examples.pack(fill="x", pady=10)
+
+        self.whois_pane = ResultPane(tab, self)
+        self.whois_pane.map_btn.pack_forget()      # WHOIS has no coordinates
+        self.whois_pane.clear("Type an IP address to find its hostname (reverse DNS) and "
+                              "who owns its network (WHOIS).")
+        self.whois_pane.pack(fill="both", expand=True)
         return tab
 
     # ----- actions --------------------------------------------------------
@@ -689,6 +718,34 @@ class IPeekApp(tk.Tk):
         if path:
             batch_lookup.write_csv(self.batch_rows, path)
             self.set_status(f"Exported {len(self.batch_rows)} row(s) to {path}")
+
+    def whois_lookup(self, ip=None):
+        if ip is not None:
+            self.whois_entry.delete(0, "end")
+            self.whois_entry.insert(0, ip)
+        text = self.whois_entry.get().strip()
+        if not text:
+            return
+        try:
+            core.analyze_ip(text)           # validate before going online
+        except ValueError:
+            self.whois_pane.show([], None,
+                                 error=f"'{text}' is not a valid IPv4 or IPv6 address.")
+            self.set_status("Invalid address")
+            return
+        self.whois_btn.state(["disabled"])
+        self.whois_pane.clear(f"Looking up the hostname and network owner of {text}...")
+        self.set_status(f"Reverse DNS / WHOIS lookup for {text}...")
+        self._run(lambda: reverse_whois.lookup(text), self.show_whois)
+
+    def show_whois(self, result, error=None):
+        self.whois_btn.state(["!disabled"])
+        if error:
+            self.whois_pane.show([], None, error=f"Lookup failed: {error}")
+            self.set_status("Lookup failed")
+            return
+        self.whois_pane.show_rows(reverse_whois.lookup_rows(result), data=result)
+        self.set_status(f"Reverse DNS / WHOIS for {result['ip']} done")
 
     # ----- background work ------------------------------------------------
     def _run(self, work, done):

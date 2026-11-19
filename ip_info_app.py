@@ -34,6 +34,7 @@ How to run
     python ip_info_app.py --batch ips.txt           # look up a file of IPs, export CSV
     python ip_info_app.py --batch ips.txt --brief   # same, but print only the summary
     python ip_info_app.py --batch ips.txt --find google   # highlight every match
+    python ip_info_app.py --whois 8.8.8.8           # hostname + network owner
 
 Code layout (for teams continuing this project)
 -----------------------------------------------
@@ -66,6 +67,7 @@ from colorama import Back, Fore, Style, just_fix_windows_console
 import batch_lookup
 import connectivity
 import local_network
+import reverse_whois
 import subnet_calc
 
 # ---------------------------------------------------------------------------
@@ -608,6 +610,32 @@ def show_batch(path, out_path=None, as_json=False, brief=False, find=None):
     return rows
 
 
+def print_rows(rows):
+    """Print (kind, label, value) rows, e.g. from reverse_whois.lookup_rows()."""
+    for kind, label, value in rows:
+        if kind == "title":
+            print_header(label.upper())
+        elif kind == "head":
+            print(f"\n{Color.BOLD} {label}{Color.END}")
+        elif kind == "row":
+            print_row(label, value)
+        elif kind == "error":
+            print(f"  {Color.RED}{value}{Color.END}")
+        else:
+            print(f"  {Color.BLUE}({value}){Color.END}")
+
+
+def show_whois(text, as_json=False, save_path=None):
+    """Feature: reverse DNS (hostname) and WHOIS (network owner) for an IP."""
+    try:
+        result = reverse_whois.lookup(text)
+    except ValueError:
+        print(f"{Color.RED}'{text}' is not a valid IPv4 or IPv6 address.{Color.END}")
+        return None
+    return _finish(result, as_json, save_path,
+                   lambda r: print_rows(reverse_whois.lookup_rows(r)))
+
+
 def save_results(data, path):
     """Feature: save results to a .json or .txt file for ticket records."""
     with open(path, "w", encoding="utf-8") as fh:
@@ -629,6 +657,7 @@ MENU = """
   7) Traceroute to a host
   8) IPv6 readiness check
   9) Batch lookup from a .txt/.csv file (export to CSV)
+ 10) Reverse DNS / WHOIS lookup (hostname, network owner)
   q) Quit
 """
 
@@ -665,8 +694,11 @@ def interactive_menu():
                 default = batch_lookup.default_output_path(path)
                 out = input(f"Save results as [{default}]: ").strip().strip('"') or default
                 show_batch(path, out_path=out)
+        elif choice == "10":
+            ip = input("Enter an IPv4 or IPv6 address [8.8.8.8]: ").strip() or "8.8.8.8"
+            show_whois(ip)
         else:
-            print(f"{Color.YELLOW}Please choose 1-9 or q.{Color.END}")
+            print(f"{Color.YELLOW}Please choose 1-10 or q.{Color.END}")
 
 
 def parse_args(argv=None):
@@ -690,6 +722,8 @@ def parse_args(argv=None):
                         help="with --batch, print only the summary table, not every full report")
     parser.add_argument("--find", metavar="TEXT",
                         help="with --batch, highlight every match of TEXT and count the matches")
+    parser.add_argument("--whois", metavar="IP",
+                        help="reverse DNS (hostname) and WHOIS (network owner) for an IP")
     parser.add_argument("--json", action="store_true", help="output raw JSON")
     parser.add_argument("--save", metavar="FILE", help="save the results to FILE (JSON)")
     parser.add_argument("--no-color", action="store_true", help="disable coloured output")
@@ -711,6 +745,8 @@ def main(argv=None):
         show_ping(args.ping, as_json=args.json, save_path=args.save)
     elif args.trace:
         show_traceroute(args.trace, as_json=args.json, save_path=args.save)
+    elif args.whois:
+        show_whois(args.whois, as_json=args.json, save_path=args.save)
     elif args.ipv6_check:
         show_ipv6_check(as_json=args.json, save_path=args.save)
     elif args.ip:

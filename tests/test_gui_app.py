@@ -191,6 +191,32 @@ class WindowTests(unittest.TestCase):
         self.assertFalse(self.app.batch_pane.winfo_manager())
         self.assertTrue(self.app.batch_table_frame.winfo_manager())
 
+    def test_whois_tab_shows_hostname_and_owner(self):
+        result = {"ip": "8.8.8.8", "ptr_name": "8.8.8.8.in-addr.arpa",
+                  "dns": {"hostname": "dns.google", "aliases": [], "forward_confirmed": True,
+                          "error": None},
+                  "whois": {"owner": "Google LLC", "network_name": "GOGL",
+                            "range": "8.8.8.0 - 8.8.8.255", "cidr": "8.8.8.0/24",
+                            "type": "DIRECT ALLOCATION", "country": None,
+                            "abuse_email": "network-abuse@google.com",
+                            "registered": "2023-12-28", "last_changed": "2023-12-28",
+                            "registry": "ARIN (North America)", "source": "https://rdap"}}
+        with mock.patch.object(gui_app.reverse_whois, "lookup", return_value=result):
+            self.app.whois_lookup("8.8.8.8")
+            done, value, error = self.app._results.get(timeout=5)
+        done(value, error)
+        text = self.pane_text(self.app.whois_pane)
+        for expected in ("dns.google", "Google LLC", "8.8.8.0/24", "network-abuse@google.com"):
+            self.assertIn(expected, text)
+        self.assertIn("N/A", text)                       # country is empty for ARIN
+        self.assertEqual(self.app.whois_pane.data, result)
+
+    def test_whois_tab_rejects_invalid_address(self):
+        with mock.patch.object(gui_app.reverse_whois, "lookup") as lookup:
+            self.app.whois_lookup("hello")
+        lookup.assert_not_called()
+        self.assertIn("not a valid", self.pane_text(self.app.whois_pane))
+
 
 class BatchReportRowsTests(unittest.TestCase):
     def test_failed_public_lookup_is_flagged_in_table(self):
