@@ -69,6 +69,7 @@ from contextlib import redirect_stdout
 import requests
 from colorama import Back, Fore, Style, just_fix_windows_console
 
+import api_cache
 import batch_lookup
 import connectivity
 import history
@@ -83,6 +84,7 @@ IPV4_URL = "https://api.ipify.org?format=json"    # IPv4 only
 IPV6_URL = "https://api6.ipify.org?format=json"   # IPv6 only (fails if no IPv6)
 IPAPI_URL = "https://ipapi.co/{ip}/json/"          # primary details API
 IPWHOIS_URL = "https://ipwho.is/{ip}"              # backup details API
+IPSTACK_URL = "https://api.ipstack.com/{ip}"       # only used when an ipstack key is set
 TIMEOUT = 5                                        # seconds per request
 APP_VERSION = "2.1.0"
 
@@ -169,8 +171,13 @@ def get_public_ips():
 
 
 def _from_ipapi(ip):
-    """Query ipapi.co and normalise the answer. Raises on error/rate-limit."""
+    """Query ipapi.co and normalise the answer. Raises on error/rate-limit.
+
+    With a paid key (IPEEK_IPAPI_KEY or config.json) it is sent as ?key=.
+    """
+    key = api_cache.api_key("ipapi_key")
     response = requests.get(IPAPI_URL.format(ip=ip), timeout=TIMEOUT,
+                            params={"key": key} if key else None,
                             headers={"User-Agent": "ipeek/" + APP_VERSION})
     response.raise_for_status()
     data = response.json()
@@ -224,20 +231,87 @@ def _from_ipwhois(ip):
     }
 
 
+def _utc_offset(seconds):
+    """ipstack gives the offset in seconds; show it like ipapi.co (+0800)."""
+    if not isinstance(seconds, (int, float)):
+        return None
+    sign = "+" if seconds >= 0 else "-"
+    minutes = abs(int(seconds)) // 60
+    return f"{sign}{minutes // 60:02d}{minutes % 60:02d}"
+
+
+def _from_ipstack(ip):
+    """Query ipstack (needs a key) and normalise the answer. Raises on error.
+
+    The free ipstack plan has no ISP/ASN/timezone, so those may be empty.
+    """
+    response = requests.get(IPSTACK_URL.format(ip=ip), timeout=TIMEOUT,
+                            params={"access_key": api_cache.api_key("ipstack_key")})
+    response.raise_for_status()
+    data = response.json()
+    if data.get("success") is False or "error" in data:
+        error = data.get("error") or {}
+        raise ValueError(error.get("info") or error.get("type") or "ipstack error")
+    conn = data.get("connection") or {}
+    tz = data.get("time_zone") or {}
+    asn = conn.get("asn")
+    return {
+        "ip": data.get("ip", ip),
+        "version": (data.get("type") or "").replace("ipv", "IPv") or None,
+        "city": data.get("city"),
+        "region": data.get("region_name"),
+        "country": data.get("country_name"),
+        "country_code": data.get("country_code"),
+        "postal": data.get("zip"),
+        "latitude": data.get("latitude"),
+        "longitude": data.get("longitude"),
+        "timezone": tz.get("id"),
+        "utc_offset": _utc_offset(tz.get("gmt_offset")),
+        "isp": conn.get("isp"),
+        "asn": f"AS{asn}" if asn else None,
+        "currency": (data.get("currency") or {}).get("code"),
+        "source": "ipstack",
+    }
+
+
+def providers():
+    """The details APIs to try, in order: ipapi.co, ipstack (only with a key), ipwho.is."""
+    order = [("ipapi.co", _from_ipapi)]
+    if api_cache.api_key("ipstack_key"):
+        order.append(("ipstack", _from_ipstack))
+    order.append(("ipwho.is", _from_ipwhois))
+    return order
+
+
 def get_ip_details(ip):
     """Return details for an IP address as a dict.
 
-    Tries ipapi.co first, then ipwho.is. If both fail, returns a dict with an
-    'error' key so the caller can still show the offline analysis.
+    Uses the cache first (see api_cache.py), then tries each provider in
+    providers() in turn. If all fail, returns a dict with an 'error' key so
+    the caller can still show the offline analysis.
     """
+    cached = api_cache.get(ip)
+    if cached:
+        return cached
     errors = []
-    for name, provider in (("ipapi.co", _from_ipapi), ("ipwho.is", _from_ipwhois)):
+    for name, provider in providers():
         try:
-            return provider(ip)
+            details = provider(ip)
         except (requests.RequestException, ValueError) as exc:
             reason = "connection failed" if isinstance(exc, requests.ConnectionError) else exc
-            errors.append(f"{name}: {reason}")
+            errors.append(f"{name}: {api_cache.redact(reason)}")   # never show a key
+            continue
+        api_cache.put(ip, details)
+        return details
     return {"ip": ip, "error": "; ".join(errors)}
+
+
+def source_text(details):
+    """'ipapi.co', or 'ipapi.co, cached 2026-11-19 10:00' for a cached answer."""
+    text = details.get("source") or "unknown"
+    if details.get("cached"):
+        text += f", cached {details.get('cached_at')}"
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -372,7 +446,7 @@ def print_report(report):
         print_row("Coordinates", f"{d['latitude']}, {d['longitude']}")
         print_row("Map", f"https://www.google.com/maps?q={d['latitude']},{d['longitude']}")
     print_row("Timezone", f"{d.get('timezone')} (UTC{d.get('utc_offset') or ''})")
-    print(f"  {Color.BLUE}(data source: {d.get('source')}){Color.END}")
+    print(f"  {Color.BLUE}(data source: {source_text(d)}){Color.END}")
 
 
 def show_my_ips(as_json=False, save_path=None):
@@ -769,6 +843,24 @@ def show_history(limit=20, changes_only=False, as_json=False):
     return entries
 
 
+def show_cache_info(as_json=False):
+    """Feature: where the cache and config files are, and which API keys are set."""
+    info = api_cache.status()
+    if as_json:
+        print(json.dumps(info, indent=2))
+        return info
+    print_header("CACHE AND API KEYS")
+    hours = info["cache_hours"]
+    print_row("Cache", f"on, answers kept {hours:g} hour(s)" if hours else "off (cache_hours is 0)")
+    print_row("Cached addresses", info["cached_addresses"])
+    print_row("Cache file", info["cache_file"])
+    print_row("API keys set", ", ".join(info["api_keys"]) or "none (free tiers)")
+    print_row("Config file", info["config_file"])
+    print(f"\n  {Color.BLUE}Set keys with the IPEEK_IPAPI_KEY / IPEEK_IPSTACK_KEY environment "
+          f"variables, or in the config file.{Color.END}")
+    return info
+
+
 def save_results(data, path):
     """Feature: save results to a .json or .txt file for ticket records."""
     with open(path, "w", encoding="utf-8") as fh:
@@ -885,6 +977,12 @@ def parse_args(argv=None):
                         help="delete the lookup history")
     parser.add_argument("--no-history", action="store_true",
                         help="don't record this run in the lookup history")
+    parser.add_argument("--no-cache", action="store_true",
+                        help="ask the API again instead of using a cached answer")
+    parser.add_argument("--cache-info", action="store_true",
+                        help="show the cache, config file and which API keys are set")
+    parser.add_argument("--clear-cache", action="store_true",
+                        help="delete the cached IP details")
     parser.add_argument("--no-color", action="store_true", help="disable coloured output")
     return parser.parse_args(argv)
 
@@ -897,7 +995,14 @@ def main(argv=None):
     batch_file, batch_mode = next(((f, m) for f, m in batch if f), (None, None))
     if args.no_history:
         history.ENABLED = False
-    if args.clear_history:
+    if args.no_cache:
+        api_cache.READ = False
+    if args.clear_cache:
+        removed = api_cache.clear()
+        print("Cache deleted." if removed else "There was no cache.")
+    elif args.cache_info:
+        show_cache_info(as_json=args.json)
+    elif args.clear_history:
         removed = history.clear()
         print("Lookup history deleted." if removed else "There was no lookup history.")
     elif args.history is not None:
@@ -929,6 +1034,7 @@ def main(argv=None):
 
 if __name__ == "__main__":
     history.ENABLED = True          # only when run as a program, never in the tests
+    api_cache.ENABLED = True
     try:
         main()
     except KeyboardInterrupt:
