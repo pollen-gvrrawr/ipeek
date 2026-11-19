@@ -6,3 +6,8 @@ venv/
 report.json
 .vscode/
 .idea/
+
+# PyInstaller build output
+build/
+dist/
+*.spec
