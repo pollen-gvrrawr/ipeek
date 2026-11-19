@@ -1,6 +1,7 @@
 # IPeek: IPv4/IPv6 Address Application
 
 [![tests](https://github.com/pollen-gvrrawr/ipeek/actions/workflows/tests.yml/badge.svg)](https://github.com/pollen-gvrrawr/ipeek/actions/workflows/tests.yml)
+[![release](https://github.com/pollen-gvrrawr/ipeek/actions/workflows/release.yml/badge.svg)](https://github.com/pollen-gvrrawr/ipeek/actions/workflows/release.yml)
 
 DEVASC Project Activity 3, Option 2. IPeek is a Python prototype for network technicians, with a command-line app and a desktop window (Tkinter) that share the same code. It shows a computer's current **public IPv4 and IPv6 addresses** and the details behind them: ISP, ASN, country code, geolocation and timezone. It also analyses any address you type in.
 
@@ -20,6 +21,7 @@ DEVASC Project Activity 3, Option 2. IPeek is a Python prototype for network tec
 | 10 | Subnet calculator for IPv4 and IPv6: mask, wildcard, broadcast, first/last usable host and host count | `subnet_calc.py` |
 | 11 | Local network info: private IPv4, subnet mask, network, default gateway and DNS servers (Windows, Linux, macOS) | `local_network.py` |
 | 12 | Connectivity tests: ping and traceroute to any host, and an IPv6 readiness check that shows whether IPv6 works end to end | `connectivity.py` |
+| 13 | Standalone Windows `.exe` files for the CLI and the GUI, so technicians can run IPeek without installing Python | `.github/workflows/release.yml` |
 
 ## APIs used
 
@@ -28,6 +30,16 @@ DEVASC Project Activity 3, Option 2. IPeek is a Python prototype for network tec
 | [ipify](https://www.ipify.org): `api.ipify.org`, `api6.ipify.org` | Public IPv4 / IPv6 | No |
 | [ipapi.co](https://ipapi.co/api/) | IP details (primary) | No (free tier: about 1,000 requests/day) |
 | [ipwho.is](https://ipwho.is) | IP details (backup) | No |
+
+## Download (Windows, no Python needed)
+
+Get the latest `ipeek.exe` (command line) and `ipeek-gui.exe` (desktop window) from the [Releases page](https://github.com/pollen-gvrrawr/ipeek/releases/latest). The files are not code-signed, so Windows SmartScreen may show "Windows protected your PC" the first time: click **More info**, then **Run anyway**.
+
+```bash
+ipeek.exe --me
+ipeek.exe --ip 8.8.8.8
+ipeek-gui.exe
+```
 
 ## Install and run
 
@@ -91,8 +103,30 @@ New Project Activity 4 features each live in their own module, so team members c
 
 * `main` holds the reviewed, working version of the app.
 * Each member works on a branch named `feature/<name>-<task>`. They open a **pull request**, another member reviews it, and it is merged into `main`.
-* **CI pipeline (GitHub Actions):** [`.github/workflows/tests.yml`](.github/workflows/tests.yml) runs every unit test on Windows and Linux on each push and pull request. `main` is protected: a pull request can only be merged when both test jobs pass.
 * Future work is listed in [BACKLOG.md](BACKLOG.md).
+
+## CI/CD pipeline (GitHub Actions)
+
+| Workflow | Runs when | What it does |
+|----------|-----------|--------------|
+| **CI**: [`tests.yml`](.github/workflows/tests.yml) | Every push to any branch, and every pull request into `main` | Runs every unit test on Windows and Linux |
+| **CD**: [`release.yml`](.github/workflows/release.yml) | A version tag such as `v2.0.0` is pushed (or it is started by hand from the Actions tab) | Runs the unit tests again. Only if they pass, it builds `ipeek.exe` and `ipeek-gui.exe` with PyInstaller, smoke-tests the CLI `.exe`, and publishes both files on a GitHub Release |
+
+`main` is protected by a ruleset: changes go in through a pull request, and the pull request can only be merged when both CI test jobs pass and the branch is up to date. Nobody can bypass the rule, so a change that breaks a test never reaches `main`, and a release is only built from code that passed every test.
+
+To publish a new release:
+
+1. Raise `APP_VERSION` in `ip_info_app.py` (for example to `2.1.0`) through a pull request, and merge it.
+2. Tag the merged commit and push the tag:
+
+   ```bash
+   git checkout main
+   git pull
+   git tag v2.1.0
+   git push origin v2.1.0
+   ```
+
+3. Watch the **release** workflow in the Actions tab. When it finishes, the `.exe` files are on the Releases page. The workflow stops if the tag doesn't match `APP_VERSION`.
 
 ## Team
 

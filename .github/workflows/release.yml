@@ -1,0 +1,93 @@
+# CD pipeline for IPeek (Project Activity 4).
+# Runs when a version tag such as v2.0.0 is pushed (or by hand from the
+# Actions tab). It runs every unit test first; only if they all pass does it
+# build the CLI and the desktop GUI as standalone Windows .exe files with
+# PyInstaller, smoke-test them, and publish them on a GitHub Release.
+# A run started by hand builds the .exe files as a downloadable artifact but
+# does not publish a release.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to create the GitHub Release
+
+jobs:
+  test:
+    name: unittest before release
+    runs-on: windows-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run the unit tests
+        run: python -m unittest discover -s tests -v
+
+  build:
+    name: build .exe files
+    needs: test            # no tests passed, no build
+    runs-on: windows-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies and PyInstaller
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Check the tag matches APP_VERSION
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          app_version=$(python -c "import ip_info_app; print(ip_info_app.APP_VERSION)")
+          if [ "v$app_version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match APP_VERSION $app_version in ip_info_app.py"
+            exit 1
+          fi
+
+      - name: Build the CLI (ipeek.exe)
+        run: pyinstaller --onefile --name ipeek ip_info_app.py
+
+      - name: Build the desktop GUI (ipeek-gui.exe)
+        run: pyinstaller --onefile --windowed --name ipeek-gui gui_app.py
+
+      - name: Smoke-test the CLI .exe (offline lookup)
+        shell: bash
+        run: |
+          ./dist/ipeek.exe --ip 192.168.1.10 --json > smoke.json
+          grep -q '"version": "IPv4"' smoke.json
+          ./dist/ipeek.exe --subnet 192.168.1.0/26 --no-color | grep -q "192.168.1.63"
+          test -s dist/ipeek-gui.exe
+
+      - name: Upload the .exe files as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipeek-windows
+          path: dist/*.exe
+
+      - name: Publish the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: IPeek ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            dist/ipeek.exe
+            dist/ipeek-gui.exe
