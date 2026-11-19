@@ -15,3 +15,5 @@ dist/
 # Batch lookup output
 *_results.csv
 report.csv
+*_whois.csv
+*_both.csv

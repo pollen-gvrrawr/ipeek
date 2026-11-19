@@ -34,6 +34,10 @@ How to run
     python ip_info_app.py --batch ips.txt           # look up a file of IPs, export CSV
     python ip_info_app.py --batch ips.txt --brief   # same, but print only the summary
     python ip_info_app.py --batch ips.txt --find google   # highlight every match
+    python ip_info_app.py --whois 8.8.8.8           # hostname + network owner
+    python ip_info_app.py --batch-whois ips.txt     # the same for every IP in a file
+    python ip_info_app.py --batch-both ips.txt      # IP details + reverse DNS / WHOIS
+    python ip_info_app.py --batch ips.txt --resolve-hostnames   # also read hostnames
 
 Code layout (for teams continuing this project)
 -----------------------------------------------
@@ -66,6 +70,7 @@ from colorama import Back, Fore, Style, just_fix_windows_console
 import batch_lookup
 import connectivity
 import local_network
+import reverse_whois
 import subnet_calc
 
 # ---------------------------------------------------------------------------
@@ -508,46 +513,99 @@ def show_ipv6_check(as_json=False, save_path=None):
     return _finish(result, as_json, save_path, show)
 
 
-def show_batch(path, out_path=None, as_json=False, brief=False, find=None):
+# What changes between the three kinds of batch lookup
+BATCH_TITLES = {"ip": "BATCH LOOKUP", "whois": "BATCH REVERSE DNS / WHOIS",
+                "both": "BATCH IP DETAILS + REVERSE DNS / WHOIS"}
+BATCH_SUFFIX = {"ip": "_results", "whois": "_whois", "both": "_both"}
+
+
+def batch_summary(rows, mode):
+    """The one-line summary of a batch, for any mode."""
+    parts = []
+    if mode in ("ip", "both"):
+        s = batch_lookup.summarize(rows)
+        parts.append(f"{s['public']} public, {s['not_public']} not public, "
+                     f"{s['failed']} failed lookup(s)")
+    if mode in ("whois", "both"):
+        s = batch_lookup.summarize_whois(rows)
+        parts.append(f"{s['hostnames']} with a hostname, {s['owners']} with a network owner"
+                     + ("" if mode == "both" else f", {s['not_public']} not public")
+                     + f", {s['failed']} failed WHOIS lookup(s)")
+    return f"{len(rows)} unique address(es): " + "; ".join(parts)
+
+
+def show_batch(path, out_path=None, as_json=False, brief=False, find=None, mode="ip",
+               hostnames=False):
     """Feature: look up every IP in a .txt/.csv file and export the results to CSV.
 
-    Prints the full report for every address (the same rows as --ip), then a
-    one-line-per-address summary table. brief=True prints only the summary,
-    which is easier to read for long files; the CSV always has every field.
-    find highlights every match of that text and counts the matches.
+    mode "ip" runs the IP-details report (the same rows as --ip) for every
+    address, "whois" the reverse DNS / WHOIS lookup (the same rows as
+    --whois), and "both" runs the two. hostnames=True also reads hostnames
+    from the file and looks up their IP addresses. Prints the full result for
+    every address, then a one-line-per-address summary table. brief=True
+    prints only the summary, which is easier to read for long files; the CSV
+    always has every field. find highlights every match of that text and
+    counts the matches.
     """
     try:
-        entries, skipped = batch_lookup.read_ip_file(path)
+        entries, skipped = batch_lookup.read_ip_file(path, hostnames)
     except OSError as exc:
         print(f"{Color.RED}Could not read '{path}': {exc.strerror or exc}{Color.END}")
         return None
     if not entries:
-        print(f"{Color.YELLOW}No IP addresses found in '{path}'.{Color.END}")
+        what = "IP addresses or hostnames" if hostnames else "IP addresses"
+        print(f"{Color.YELLOW}No {what} found in '{path}'.{Color.END}")
         return None
+    names = [t for t, _ in entries if batch_lookup.is_hostname(t)]
+    if names and not as_json:
+        print(f"  Resolving {len(names)} hostname(s)...", flush=True)
+    entries, unresolved = batch_lookup.resolve_entries(entries)
 
     def progress(done, total, ip):
         if not as_json:
             print(f"\r  Looking up {done}/{total}: {ip:<40}", end="", flush=True)
 
     reports = {}
+    cache = reverse_whois.WhoisCache()           # one WHOIS query per network
+    if mode == "whois":
+        run = lambda ip: reverse_whois.lookup(ip, cache)  # noqa: E731
+        to_row, columns = batch_lookup.whois_row, batch_lookup.WHOIS_COLUMNS
+    elif mode == "both":
+        run = lambda ip: {"report": build_report(ip),  # noqa: E731
+                          "whois": reverse_whois.lookup(ip, cache)}
+        to_row, columns = batch_lookup.both_row, batch_lookup.BOTH_COLUMNS
+    else:
+        run, to_row, columns = build_report, batch_lookup.result_row, batch_lookup.CSV_COLUMNS
 
-    def lookup(ip):                       # keep each full report for printing
-        reports[ip] = build_report(ip)
+    def show_one(result):
+        if mode == "whois":
+            print_rows(reverse_whois.lookup_rows(result))
+        elif mode == "both":
+            print_report(result["report"])
+            print_rows(reverse_whois.lookup_rows(result["whois"])[1:])   # no 2nd title
+        else:
+            print_report(result)
+
+    def lookup(ip):                       # keep each full result for printing
+        reports[ip] = run(ip)
         return reports[ip]
 
     if not as_json:
-        print_header(f"BATCH LOOKUP: {os.path.basename(path)}")
-    rows = batch_lookup.run_batch(entries, lookup, progress)
-    out_path = out_path or batch_lookup.default_output_path(path)
-    batch_lookup.write_csv(rows, out_path)
+        print_header(f"{BATCH_TITLES[mode]}: {os.path.basename(path)}")
+    rows = batch_lookup.run_batch(entries, lookup, progress, to_row=to_row)
+    out_path = out_path or batch_lookup.default_output_path(path, BATCH_SUFFIX[mode])
+    batch_lookup.write_csv(rows, out_path, columns)
 
     def print_address(r):
         if r["ip"] in reports:
-            print_report(reports[r["ip"]])
+            show_one(reports[r["ip"]])
         else:                             # the lookup crashed, so there is no report
             print_header(f"ADDRESS: {r['ip']}")
-            print(f"  {Color.RED}Lookup failed: {r['error']}{Color.END}")
+            print(f"  {Color.RED}Lookup failed: {r.get('error') or r.get('whois_error')}"
+                  f"{Color.END}")
         print_row("Times seen in file", r["count"])
+        if r["from_hostname"]:
+            print_row("From hostname in file", r["from_hostname"])
 
     # Each address's report is built as text first, so --find can highlight
     # and count matches in it (the count works with --brief too).
@@ -570,10 +628,13 @@ def show_batch(path, out_path=None, as_json=False, brief=False, find=None):
         blocks.append(block)
         if found:
             matches[r["ip"]] = found
+    summary = batch_summary(rows, mode)
 
     if as_json:
-        data = {"input": path, "output": out_path, "results": rows,
-                "skipped_lines": [n for n, _ in skipped]}
+        data = {"input": path, "output": out_path, "mode": mode, "summary": summary,
+                "results": rows, "skipped_lines": [n for n, _ in skipped]}
+        if hostnames:
+            data["unresolved_hostnames"] = dict(unresolved)
         if find:
             data["find"] = {"text": find, "matches": matches}
         print(json.dumps(data, indent=2))
@@ -583,20 +644,44 @@ def show_batch(path, out_path=None, as_json=False, brief=False, find=None):
     if not brief:
         print("".join(blocks), end="")
         print_header(f"SUMMARY: {os.path.basename(path)}")
-    print(f"  {Color.CYAN}{'IP address':<40}{'Scope':<12}{'Country':<9}ISP / note{Color.END}")
+    if mode == "whois":
+        print(f"  {Color.CYAN}{'IP address':<40}{'Hostname':<32}Owner / note{Color.END}")
+    elif mode == "both":
+        print(f"  {Color.CYAN}{'IP address':<40}{'Scope':<12}{'Hostname':<32}"
+              f"Owner / ISP / note{Color.END}")
+    else:
+        print(f"  {Color.CYAN}{'IP address':<40}{'Scope':<12}{'Country':<9}ISP / note{Color.END}")
     for r in rows:
-        scope = r["scope"].split(" ")[0] or "?"
-        note = r["isp"] or (f"{Color.RED}{r['error']}{Color.END}" if r["error"]
-                            and scope in ("Public", "?") else "")
-        line = f"  {r['ip']:<40}{scope:<12}{r['country_code'] or '-':<9}{note}"
+        if mode == "whois":
+            failed = r["whois_error"] and not batch_lookup.whois_not_public(r)
+            note = r["owner"] or (f"{Color.RED}{r['whois_error']}{Color.END}" if failed
+                                  else "not public")
+            line = f"  {r['ip']:<40}{(r['hostname'] or '-')[:30]:<32}{note}"
+        elif mode == "both":
+            scope = r["scope"].split(" ")[0] or "?"
+            note = r["owner"] or r["isp"] or (
+                f"{Color.RED}{r['error'] or r['whois_error']}{Color.END}"
+                if scope in ("Public", "?") else "not public")
+            line = f"  {r['ip']:<40}{scope:<12}{(r['hostname'] or '-')[:30]:<32}{note}"
+        else:
+            scope = r["scope"].split(" ")[0] or "?"
+            note = r["isp"] or (f"{Color.RED}{r['error']}{Color.END}" if r["error"]
+                                and scope in ("Public", "?") else "")
+            line = f"  {r['ip']:<40}{scope:<12}{r['country_code'] or '-':<9}{note}"
+        if r["from_hostname"]:
+            line += f"  (from {r['from_hostname']})"
         print(highlight(line, find)[0])
-    s = batch_lookup.summarize(rows)
-    print(f"\n  {s['total']} unique address(es): {s['public']} public, "
-          f"{s['not_public']} not public, {s['failed']} failed lookup(s)")
+    print(f"\n  {summary}")
     if skipped:
         lines = ", ".join(str(n) for n, _ in skipped[:10]) + (" ..." if len(skipped) > 10 else "")
-        print(f"  {Color.YELLOW}Skipped {len(skipped)} line(s) with no IP address: "
+        what = "IP address or hostname" if hostnames else "IP address"
+        print(f"  {Color.YELLOW}Skipped {len(skipped)} line(s) with no {what}: "
               f"line {lines}{Color.END}")
+    if unresolved:
+        listed = ", ".join(n for n, _ in unresolved[:10]) + (" ..." if len(unresolved) > 10
+                                                              else "")
+        print(f"  {Color.YELLOW}Could not resolve {len(unresolved)} hostname(s): "
+              f"{listed}{Color.END}")
     if find:
         if matches:
             ips = ", ".join(list(matches)[:10]) + (" ..." if len(matches) > 10 else "")
@@ -606,6 +691,32 @@ def show_batch(path, out_path=None, as_json=False, brief=False, find=None):
             print(f"  {Color.YELLOW}Find \"{find}\": no matches{Color.END}")
     print(f"\n{Color.GREEN}Results saved to {os.path.abspath(out_path)}{Color.END}")
     return rows
+
+
+def print_rows(rows):
+    """Print (kind, label, value) rows, e.g. from reverse_whois.lookup_rows()."""
+    for kind, label, value in rows:
+        if kind == "title":
+            print_header(label.upper())
+        elif kind == "head":
+            print(f"\n{Color.BOLD} {label}{Color.END}")
+        elif kind == "row":
+            print_row(label, value)
+        elif kind == "error":
+            print(f"  {Color.RED}{value}{Color.END}")
+        else:
+            print(f"  {Color.BLUE}({value}){Color.END}")
+
+
+def show_whois(text, as_json=False, save_path=None):
+    """Feature: reverse DNS (hostname) and WHOIS (network owner) for an IP."""
+    try:
+        result = reverse_whois.lookup(text)
+    except ValueError:
+        print(f"{Color.RED}'{text}' is not a valid IPv4 or IPv6 address.{Color.END}")
+        return None
+    return _finish(result, as_json, save_path,
+                   lambda r: print_rows(reverse_whois.lookup_rows(r)))
 
 
 def save_results(data, path):
@@ -629,6 +740,9 @@ MENU = """
   7) Traceroute to a host
   8) IPv6 readiness check
   9) Batch lookup from a .txt/.csv file (export to CSV)
+ 10) Reverse DNS / WHOIS lookup (hostname, network owner)
+ 11) Batch reverse DNS / WHOIS from a .txt/.csv file (export to CSV)
+ 12) Batch IP details + reverse DNS / WHOIS from a .txt/.csv file
   q) Quit
 """
 
@@ -659,14 +773,19 @@ def interactive_menu():
             (show_ping if choice == "6" else show_traceroute)(host)
         elif choice == "8":
             show_ipv6_check()
-        elif choice == "9":
+        elif choice in ("9", "11", "12"):
+            mode = {"9": "ip", "11": "whois", "12": "both"}[choice]
             path = input("File with IP addresses (.txt or .csv): ").strip().strip('"')
             if path:
-                default = batch_lookup.default_output_path(path)
+                default = batch_lookup.default_output_path(path, BATCH_SUFFIX[mode])
                 out = input(f"Save results as [{default}]: ").strip().strip('"') or default
-                show_batch(path, out_path=out)
+                hosts = input("Also look up hostnames in the file? [y/N]: ").strip().lower()
+                show_batch(path, out_path=out, mode=mode, hostnames=hosts in ("y", "yes"))
+        elif choice == "10":
+            ip = input("Enter an IPv4 or IPv6 address [8.8.8.8]: ").strip() or "8.8.8.8"
+            show_whois(ip)
         else:
-            print(f"{Color.YELLOW}Please choose 1-9 or q.{Color.END}")
+            print(f"{Color.YELLOW}Please choose 1-12 or q.{Color.END}")
 
 
 def parse_args(argv=None):
@@ -684,12 +803,24 @@ def parse_args(argv=None):
                         help="check whether IPv6 works end to end")
     parser.add_argument("--batch", metavar="FILE",
                         help="look up every IP in a .txt/.csv file and export the results to CSV")
+    parser.add_argument("--batch-whois", metavar="FILE",
+                        help="reverse DNS / WHOIS for every IP in a .txt/.csv file, export to CSV")
+    parser.add_argument("--batch-both", metavar="FILE",
+                        help="IP details AND reverse DNS / WHOIS for every IP in a .txt/.csv "
+                             "file, export to CSV")
+    parser.add_argument("--resolve-hostnames", action="store_true",
+                        help="with a batch option, also read hostnames (e.g. dns.google) "
+                             "from the file and look up their IP addresses")
     parser.add_argument("--out", metavar="FILE",
-                        help="CSV file for --batch results (default: <FILE>_results.csv)")
+                        help="CSV file for batch results (default: <FILE>_results.csv, "
+                             "_whois.csv or _both.csv)")
     parser.add_argument("--brief", action="store_true",
-                        help="with --batch, print only the summary table, not every full report")
+                        help="with a batch option, print only the summary table")
     parser.add_argument("--find", metavar="TEXT",
-                        help="with --batch, highlight every match of TEXT and count the matches")
+                        help="with a batch option, highlight every match of TEXT "
+                             "and count the matches")
+    parser.add_argument("--whois", metavar="IP",
+                        help="reverse DNS (hostname) and WHOIS (network owner) for an IP")
     parser.add_argument("--json", action="store_true", help="output raw JSON")
     parser.add_argument("--save", metavar="FILE", help="save the results to FILE (JSON)")
     parser.add_argument("--no-color", action="store_true", help="disable coloured output")
@@ -700,9 +831,11 @@ def main(argv=None):
     args = parse_args(argv)
     if args.no_color or args.json or not sys.stdout.isatty():
         Color.disable()
-    if args.batch:
-        show_batch(args.batch, out_path=args.out, as_json=args.json, brief=args.brief,
-                   find=args.find)
+    batch = [(args.batch, "ip"), (args.batch_whois, "whois"), (args.batch_both, "both")]
+    batch_file, batch_mode = next(((f, m) for f, m in batch if f), (None, None))
+    if batch_file:
+        show_batch(batch_file, out_path=args.out, as_json=args.json, brief=args.brief,
+                   find=args.find, mode=batch_mode, hostnames=args.resolve_hostnames)
     elif args.subnet:
         show_subnet(args.subnet, as_json=args.json, save_path=args.save)
     elif args.local:
@@ -711,6 +844,8 @@ def main(argv=None):
         show_ping(args.ping, as_json=args.json, save_path=args.save)
     elif args.trace:
         show_traceroute(args.trace, as_json=args.json, save_path=args.save)
+    elif args.whois:
+        show_whois(args.whois, as_json=args.json, save_path=args.save)
     elif args.ipv6_check:
         show_ipv6_check(as_json=args.json, save_path=args.save)
     elif args.ip:
