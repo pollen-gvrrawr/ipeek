@@ -135,7 +135,7 @@ def resolve_hostname(name):
     return ips
 
 
-def resolve_entries(entries, resolver=resolve_hostname):
+def resolve_entries(entries, resolver=None):
     """Replace the hostnames in extract_ips() entries by their IP addresses.
 
     Returns (resolved, unresolved):
@@ -144,7 +144,12 @@ def resolve_entries(entries, resolver=resolve_hostname):
                      the IP itself was in the file). An IP that is both in the
                      file and behind a hostname is looked up once.
         unresolved - list of (hostname, reason)
+
+    resolver defaults to resolve_hostname, looked up when this runs (not when
+    the module loads), so tests that replace resolve_hostname with a fake
+    never send real DNS queries.
     """
+    resolver = resolver or resolve_hostname
     merged, unresolved = {}, []
     for target, count in entries:
         if not is_hostname(target):
