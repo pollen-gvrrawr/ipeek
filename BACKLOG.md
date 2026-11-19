@@ -10,5 +10,5 @@ Items are in priority order (P1 is highest).
 | P2 | **Reverse DNS / WHOIS lookup** (hostname of an IP, network owner) | Fuller troubleshooting picture | Done |
 | P3 | **Connectivity tests**: ping and traceroute to a chosen IP, with an IPv6 readiness check | Shows whether IPv6 really works end-to-end | Done |
 | P3 | **History**: keep a log of past lookups and detect when the public IP changes | Helps track dynamic IP changes from an ISP | Done |
-| P3 | **Caching and API-key support** (ipapi.co paid key, ipstack) | Avoids free-tier rate limits | To do |
+| P3 | **Caching and API-key support** (ipapi.co paid key, ipstack) | Avoids free-tier rate limits | Done |
 | P3 | Package the CLI and the desktop GUI as standalone `.exe` files with PyInstaller | Technicians can run it without installing Python | Done |

@@ -26,15 +26,36 @@ DEVASC Project Activity 3, Option 2. IPeek is a Python prototype for network tec
 | 15 | Reverse DNS / WHOIS: the real hostname of an IP (PTR lookup, with a forward-confirmation check) and who owns its network (owner, IP range/CIDR, abuse contact, registry), for one IP or every IP in a .txt/.csv file (exported to CSV), in the CLI and the GUI | `reverse_whois.py` |
 | 16 | Batch extras: run **both** lookups (IP details + reverse DNS / WHOIS) for every IP in one go, and optionally read **hostnames** from the file (each is resolved to its IP addresses, which are then looked up; names that don't resolve are reported), in the CLI and the GUI | `batch_lookup.py` |
 | 17 | Lookup history: every lookup is logged on this computer, and each check of your public IP is compared with the last one, so a change of IP from the ISP is reported straight away. `--history`, `--ip-changes` and a History tab in the GUI | `history.py` |
+| 18 | Caching and API keys: IP details are cached for 24 hours, so repeat lookups and batch files don't use up the free-tier limits. A paid ipapi.co key and an ipstack key can be set as environment variables or in a config file. `--cache-info`, `--no-cache`, `--clear-cache` | `api_cache.py` |
 
 ## APIs used
 
 | API | Purpose | Key needed? |
 |-----|---------|-------------|
 | [ipify](https://www.ipify.org): `api.ipify.org`, `api6.ipify.org` | Public IPv4 / IPv6 | No |
-| [ipapi.co](https://ipapi.co/api/) | IP details (primary) | No (free tier: about 1,000 requests/day) |
+| [ipapi.co](https://ipapi.co/api/) | IP details (primary) | No (free tier: about 1,000 requests/day). A paid key raises the limit |
+| [ipstack](https://ipstack.com) | IP details (second choice, only used when a key is set) | Yes |
 | [ipwho.is](https://ipwho.is) | IP details (backup) | No |
 | [RDAP](https://about.rdap.org) via `rdap.org` | WHOIS: network owner, range and abuse contact. rdap.org redirects to the right registry (ARIN, RIPE NCC, APNIC, LACNIC, AFRINIC) | No |
+
+IP details are tried in this order: cache, ipapi.co, ipstack (if a key is set), ipwho.is.
+
+### API keys and the cache
+
+Keys are optional; without them IPeek uses the free tiers. Set them as environment variables:
+
+```powershell
+setx IPEEK_IPAPI_KEY "your-ipapi-key"       # Windows (open a new terminal afterwards)
+setx IPEEK_IPSTACK_KEY "your-ipstack-key"
+```
+
+or put them in `config.json` in IPeek's app-data folder (Windows: `%APPDATA%\IPeek\config.json`), which also works for the `.exe` files:
+
+```json
+{"ipapi_key": "your-ipapi-key", "ipstack_key": "your-ipstack-key", "cache_hours": 24}
+```
+
+`cache_hours` sets how long answers are kept (0 turns the cache off). Never commit a key: the config file lives outside the project folder, and keys are kept out of the cache, the history and error messages. A cached answer is marked in the report, for example `data source: ipapi.co, cached 2026-11-19 10:00`.
 
 ## Download (Windows, no Python needed)
 
@@ -87,6 +108,9 @@ python ip_info_app.py --history                     # the last 20 lookups (--his
 python ip_info_app.py --ip-changes                  # every change of your public IP
 python ip_info_app.py --me --no-history             # a check that isn't recorded
 python ip_info_app.py --clear-history               # delete the history
+python ip_info_app.py --cache-info                  # cache, config file and which API keys are set
+python ip_info_app.py --ip 8.8.8.8 --no-cache       # ask the API again instead of using the cache
+python ip_info_app.py --clear-cache                 # delete the cached IP details
 
 
 python gui_app.py                     # desktop window
@@ -142,6 +166,7 @@ New Project Activity 4 features each live in their own module, so team members c
 * `connectivity.py`: ping, traceroute and the IPv6 readiness check. It runs the system's `ping`/`tracert`/`traceroute` without a shell, and checks the host name first so it can't be used to inject commands.
 * `batch_lookup.py`: batch lookup. It finds the IPs in every column of a .txt/.csv file (ports such as `203.0.113.5:443` are removed, duplicates are looked up once and counted), runs `build_report()` for each, and writes the results to CSV. Private addresses skip the API, which saves the free-tier limit; a large file of public IPs can still use up ipapi.co's daily requests, and then ipwho.is takes over. It can run IP details, reverse DNS / WHOIS, or both for every address (`both_row()` merges the two, renaming the WHOIS `country`/`source` columns to `whois_country`/`whois_source`). With `--resolve-hostnames`, `resolve_entries()` turns hostnames into their IP addresses first; it is off by default because logs are full of dotted names (such as `HELO mail.example.org`) that aren't meant to be looked up.
 * `reverse_whois.py`: reverse DNS and WHOIS. The hostname comes from a real PTR lookup through the computer's DNS resolver, then a forward-confirmation check resolves the hostname back to see whether it points to the same IP (a mismatch is a common sign of a misconfigured or spoofed mail server). The network owner comes from RDAP, the JSON version of WHOIS. Private addresses skip RDAP because they have no public record. Only the owner organisation and abuse e-mail are shown, not personal contact names. For batch lookups (`--batch-whois` and the GUI), addresses in a network that was already looked up reuse that WHOIS answer, so a long file only sends one registry query per network and stays under the registries' rate limits.
+* `api_cache.py`: caching and API-key support. Successful IP-details answers are saved for 24 hours in `cache.json` in the same app-data folder as the history, so a repeated address (in later lookups or other batch files) doesn't send another request; failed lookups are never cached. API keys come from the `IPEEK_IPAPI_KEY` / `IPEEK_IPSTACK_KEY` environment variables or `config.json`, and `redact()` removes them from error messages (requests puts the full URL in its errors). Like the history, the cache is only switched on when the CLI or GUI is started as a program, so the unit tests never touch a real cache file.
 * `history.py`: lookup history. Each lookup is saved as one line of JSON in the user's app-data folder (Windows: `%APPDATA%\IPeek\history.jsonl`; macOS: `~/Library/Application Support/IPeek/`; Linux: `~/.local/share/ipeek/`), so it works the same for the `.exe` and is never committed. Only the newest 1,000 entries are kept. Logging is only switched on when the CLI or GUI is started as a program, so the unit tests never write to a real history file.
 
 ## Team workflow

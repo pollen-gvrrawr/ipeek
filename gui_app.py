@@ -101,7 +101,7 @@ def report_rows(report):
     if d.get("latitude") is not None:
         rows.append(("row", "Coordinates", f"{d['latitude']}, {d['longitude']}"))
     rows += [("row", "Timezone", f"{d.get('timezone')} (UTC{d.get('utc_offset') or ''})"),
-             ("note", "", f"data source: {d.get('source')}")]
+             ("note", "", f"data source: {core.source_text(d)}")]
     return rows
 
 
@@ -1157,6 +1157,7 @@ class IPeekApp(tk.Tk):
 
 def main():
     history.ENABLED = True          # only when run as a program, never in the tests
+    core.api_cache.ENABLED = True
     IPeekApp().mainloop()
 
 
