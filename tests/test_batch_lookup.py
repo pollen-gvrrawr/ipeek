@@ -271,6 +271,8 @@ class BothModeTests(unittest.TestCase):
         with mock.patch.object(app, "build_report", side_effect=fake_build_report), \
                 mock.patch.object(app.reverse_whois, "lookup", side_effect=fake_whois), \
                 mock.patch.object(batch_lookup, "resolve_hostname", side_effect=fake_resolver), \
+                mock.patch.object(batch_lookup.socket, "getaddrinfo",       # no real DNS
+                                  side_effect=AssertionError("real DNS lookup in a test")), \
                 redirect_stdout(io.StringIO()) as out:
             app.main(["--no-color", *args])
         return out.getvalue()

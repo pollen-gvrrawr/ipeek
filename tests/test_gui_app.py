@@ -275,7 +275,9 @@ class WindowTests(unittest.TestCase):
             raise OSError("the name does not exist or has no address")
         with mock.patch.object(core, "build_report", side_effect=report), \
                 mock.patch.object(gui_app.reverse_whois, "lookup", side_effect=whois), \
-                mock.patch.object(gui_app.batch_lookup, "resolve_hostname", side_effect=resolver):
+                mock.patch.object(gui_app.batch_lookup, "resolve_hostname", side_effect=resolver), \
+                mock.patch.object(gui_app.batch_lookup.socket, "getaddrinfo",   # no real DNS
+                                  side_effect=AssertionError("real DNS lookup in a test")):
             self.app.run_batch()
             while True:
                 done, value, error = self.app._results.get(timeout=5)
