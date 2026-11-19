@@ -144,6 +144,12 @@ class FileAndCliTests(unittest.TestCase):
         self.assertNotIn("Address analysis", text)
         self.assertIn("2 match(es) in 2 address(es)", text)       # the two IPv4 addresses
 
+    def test_find_skips_the_map_link(self):
+        text = self.run_find("--find", "google")
+        self.assertIn("[GOOGLE]", text)
+        self.assertIn("https://www.google.com/maps", text)        # map row not highlighted
+        self.assertIn('Find "google": 1 match(es) in 1 address(es) (8.8.8.8)', text)
+
     def test_find_no_matches(self):
         self.assertIn('Find "cloudflare": no matches', self.run_find("--find", "cloudflare"))
 

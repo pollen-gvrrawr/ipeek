@@ -551,9 +551,22 @@ def show_batch(path, out_path=None, as_json=False, brief=False, find=None):
 
     # Each address's report is built as text first, so --find can highlight
     # and count matches in it (the count works with --brief too).
+    def find_in(block):
+        """highlight() each line, except the Map link: every public IP's map URL
+        contains "google.com", which would make a search for "google" match them all."""
+        out, total = [], 0
+        for line in block.splitlines(keepends=True):
+            if _ANSI.sub("", line).strip().startswith("Map "):
+                out.append(line)
+                continue
+            line, found = highlight(line, find)
+            out.append(line)
+            total += found
+        return "".join(out), total
+
     blocks, matches = [], {}
     for r in rows:
-        block, found = highlight(_capture(print_address, r), find)
+        block, found = find_in(_capture(print_address, r))
         blocks.append(block)
         if found:
             matches[r["ip"]] = found

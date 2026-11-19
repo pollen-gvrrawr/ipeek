@@ -64,6 +64,7 @@ python ip_info_app.py --ipv6-check                   # does IPv6 work end to end
 python ip_info_app.py --batch samples/ips.txt                    # batch lookup -> samples/ips_results.csv
 python ip_info_app.py --batch samples/firewall_log.csv           # -> samples/firewall_log_results.csv
 python ip_info_app.py --batch samples/ips.txt --brief            # summary table only (CSV still has every field)
+python ip_info_app.py --batch samples/ips.txt --find google      # highlight every match and count them
 python ip_info_app.py --batch samples/ips.txt --out report.csv   # choose the CSV file name
 python ip_info_app.py --batch samples/firewall_log.csv --json    # raw JSON
 python ip_info_app.py --batch samples/ips.txt --find google
