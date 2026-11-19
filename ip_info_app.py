@@ -84,7 +84,7 @@ IPV6_URL = "https://api6.ipify.org?format=json"   # IPv6 only (fails if no IPv6)
 IPAPI_URL = "https://ipapi.co/{ip}/json/"          # primary details API
 IPWHOIS_URL = "https://ipwho.is/{ip}"              # backup details API
 TIMEOUT = 5                                        # seconds per request
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
 
 
 # ---------------------------------------------------------------------------
