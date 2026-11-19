@@ -22,6 +22,7 @@ DEVASC Project Activity 3, Option 2. IPeek is a Python prototype for network tec
 | 11 | Local network info: private IPv4, subnet mask, network, default gateway and DNS servers (Windows, Linux, macOS) | `local_network.py` |
 | 12 | Connectivity tests: ping and traceroute to any host, and an IPv6 readiness check that shows whether IPv6 works end to end | `connectivity.py` |
 | 13 | Standalone Windows `.exe` files for the CLI and the GUI, so technicians can run IPeek without installing Python | `.github/workflows/release.yml` |
+| 14 | Batch lookup: reads the IPs from a .txt/.csv file (firewall exports, logs; IPs can be in any column) and exports every field of the single-IP report to CSV, in the CLI and the GUI | `batch_lookup.py` |
 
 ## APIs used
 
@@ -60,9 +61,27 @@ python ip_info_app.py --local                        # private IP, mask, gateway
 python ip_info_app.py --ping 8.8.8.8                 # ping a host
 python ip_info_app.py --trace 8.8.8.8                # traceroute to a host
 python ip_info_app.py --ipv6-check                   # does IPv6 work end to end?
+python ip_info_app.py --batch samples/ips.txt                    # batch lookup -> samples/ips_results.csv
+python ip_info_app.py --batch samples/firewall_log.csv           # -> samples/firewall_log_results.csv
+python ip_info_app.py --batch samples/ips.txt --brief            # summary table only (CSV still has every field)
+python ip_info_app.py --batch samples/ips.txt --find google      # highlight every match and count them
+python ip_info_app.py --batch samples/ips.txt --out report.csv   # choose the CSV file name
+python ip_info_app.py --batch samples/firewall_log.csv --json    # raw JSON
+python ip_info_app.py --batch samples/ips.txt --find google
+python ip_info_app.py --batch samples/firewall_log.csv --find private
+python ip_info_app.py --batch samples/ips.txt --find AS15169 --brief   # summary only, still counts matches
+python ip_info_app.py --batch samples/ips.txt --find cloudflare --json # matches per IP in the JSON
+
 
 python gui_app.py                     # desktop window
 ```
+
+The [`samples/`](samples/) folder has two files for trying the batch lookup:
+
+* [`samples/ips.txt`](samples/ips.txt): one address per line. It has public IPv4 and IPv6 DNS servers, private, loopback and link-local addresses, a duplicate (counted twice) and two invalid lines (reported as skipped).
+* [`samples/firewall_log.csv`](samples/firewall_log.csv): a firewall-style export with a header row and the IPs in the `src_ip` and `dst_ip` columns, including one with a port (`8.8.8.8:53`).
+
+In the GUI, open the **Batch lookup** tab, click **Choose file...** and pick one of these files. Each run of a sample file makes about 6 real API calls, so repeated runs count towards ipapi.co's daily limit.
 
 Run the tests. They work offline because the APIs are mocked:
 
@@ -72,12 +91,13 @@ python -m unittest discover -s tests -v
 
 ## Desktop GUI
 
-[`gui_app.py`](gui_app.py) opens IPeek in a window. It has two tabs:
+[`gui_app.py`](gui_app.py) opens IPeek in a window. It has three tabs:
 
 * **My public IPs** shows your public IPv4 and IPv6 at the top, then the full report for each. **Refresh** looks them up again.
 * **Look up an IP** takes any IPv4 or IPv6 address, with example buttons for public, private and link-local addresses.
+* **Batch lookup** opens a .txt or .csv file, looks up every IP in it with a progress bar and can **Export CSV**. A **View** toggle switches between **Reports** (one vertical report per IP, like the Look up tab) and **Table** (one row per IP, all fields). The **Find** box highlights every match in either view; use ▲/▼ (or Enter / Shift+Enter) to go through them, Esc to clear, and Ctrl+F to jump to it.
 
-Both tabs can **Save report (JSON)** and **Open map** in your browser. The GUI has no networking or analysis code of its own. It calls `get_my_report()` and `build_report()` from `ip_info_app.py`, so the CLI and the GUI always give the same answers. Lookups run in a background thread, so the window doesn't freeze while it waits for an API.
+The first two tabs can **Save report (JSON)** and **Open map** in your browser. The GUI has no networking or analysis code of its own. It calls `get_my_report()` and `build_report()` from `ip_info_app.py`, so the CLI and the GUI always give the same answers. Lookups run in a background thread, so the window doesn't freeze while it waits for an API.
 
 Tkinter comes with the standard Python installer on Windows and macOS. On Linux, install it with `sudo apt install python3-tk`.
 
@@ -98,6 +118,7 @@ New Project Activity 4 features each live in their own module, so team members c
 * `subnet_calc.py`: subnet calculator (offline, `ipaddress` module).
 * `local_network.py`: local network info. It reads the operating system's own tools (`ipconfig`, `ip`, `ifconfig`); the parsers are tested with sample output from each system.
 * `connectivity.py`: ping, traceroute and the IPv6 readiness check. It runs the system's `ping`/`tracert`/`traceroute` without a shell, and checks the host name first so it can't be used to inject commands.
+* `batch_lookup.py`: batch lookup. It finds the IPs in every column of a .txt/.csv file (ports such as `203.0.113.5:443` are removed, duplicates are looked up once and counted), runs `build_report()` for each, and writes the results to CSV. Private addresses skip the API, which saves the free-tier limit; a large file of public IPs can still use up ipapi.co's daily requests, and then ipwho.is takes over.
 
 ## Team workflow
 

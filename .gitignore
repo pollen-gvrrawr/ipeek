@@ -11,3 +11,7 @@ report.json
 build/
 dist/
 *.spec
+
+# Batch lookup output
+*_results.csv
+report.csv

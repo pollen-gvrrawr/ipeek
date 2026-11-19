@@ -31,6 +31,9 @@ How to run
     python ip_info_app.py --ping 8.8.8.8            # ping a host
     python ip_info_app.py --trace 8.8.8.8           # traceroute to a host
     python ip_info_app.py --ipv6-check              # does IPv6 work end to end?
+    python ip_info_app.py --batch ips.txt           # look up a file of IPs, export CSV
+    python ip_info_app.py --batch ips.txt --brief   # same, but print only the summary
+    python ip_info_app.py --batch ips.txt --find google   # highlight every match
 
 Code layout (for teams continuing this project)
 -----------------------------------------------
@@ -53,9 +56,14 @@ import os
 import sys
 from datetime import datetime
 
-import requests
-from colorama import Fore, Style, just_fix_windows_console
+import io
+import re
+from contextlib import redirect_stdout
 
+import requests
+from colorama import Back, Fore, Style, just_fix_windows_console
+
+import batch_lookup
 import connectivity
 import local_network
 import subnet_calc
@@ -83,12 +91,47 @@ class Color:
     YELLOW = Fore.LIGHTYELLOW_EX
     RED = Fore.LIGHTRED_EX
     BOLD = Style.BRIGHT
+    HIGHLIGHT = Back.YELLOW + Fore.BLACK   # --find matches
     END = Style.RESET_ALL
 
     @classmethod
     def disable(cls):
-        for name in ("HEADER", "BLUE", "CYAN", "GREEN", "YELLOW", "RED", "BOLD", "END"):
+        for name in ("HEADER", "BLUE", "CYAN", "GREEN", "YELLOW", "RED", "BOLD",
+                     "HIGHLIGHT", "END"):
             setattr(cls, name, "")
+
+
+_ANSI = re.compile(r"(\x1b\[[0-9;]*m)")
+
+
+def highlight(text, query):
+    """Highlight every case-insensitive match of query in text.
+
+    Returns (text, number_of_matches). Colour codes already in the text are
+    skipped, and the colour that was active before a match is restored after
+    it. When colours are off (--no-color, or output saved to a file), matches
+    are shown in [brackets] instead.
+    """
+    if not query:
+        return text, 0
+    pattern = re.compile(re.escape(query), re.IGNORECASE)
+    on, off = (Color.HIGHLIGHT, Color.END) if Color.HIGHLIGHT else ("[", "]")
+    out, active, count = [], "", 0
+    for i, piece in enumerate(_ANSI.split(text)):
+        if i % 2:                                  # a colour code, keep it as is
+            out.append(piece)
+            active = "" if piece == Style.RESET_ALL else active + piece
+            continue
+        out.append(pattern.sub(lambda m: on + m.group(0) + off + active, piece))
+        count += len(pattern.findall(piece))
+    return "".join(out), count
+
+
+def _capture(func, *args):
+    """Run a print function and return what it printed as a string."""
+    with redirect_stdout(io.StringIO()) as buffer:
+        func(*args)
+    return buffer.getvalue()
 
 
 just_fix_windows_console()  # enables colour codes in the Windows console
@@ -465,6 +508,106 @@ def show_ipv6_check(as_json=False, save_path=None):
     return _finish(result, as_json, save_path, show)
 
 
+def show_batch(path, out_path=None, as_json=False, brief=False, find=None):
+    """Feature: look up every IP in a .txt/.csv file and export the results to CSV.
+
+    Prints the full report for every address (the same rows as --ip), then a
+    one-line-per-address summary table. brief=True prints only the summary,
+    which is easier to read for long files; the CSV always has every field.
+    find highlights every match of that text and counts the matches.
+    """
+    try:
+        entries, skipped = batch_lookup.read_ip_file(path)
+    except OSError as exc:
+        print(f"{Color.RED}Could not read '{path}': {exc.strerror or exc}{Color.END}")
+        return None
+    if not entries:
+        print(f"{Color.YELLOW}No IP addresses found in '{path}'.{Color.END}")
+        return None
+
+    def progress(done, total, ip):
+        if not as_json:
+            print(f"\r  Looking up {done}/{total}: {ip:<40}", end="", flush=True)
+
+    reports = {}
+
+    def lookup(ip):                       # keep each full report for printing
+        reports[ip] = build_report(ip)
+        return reports[ip]
+
+    if not as_json:
+        print_header(f"BATCH LOOKUP: {os.path.basename(path)}")
+    rows = batch_lookup.run_batch(entries, lookup, progress)
+    out_path = out_path or batch_lookup.default_output_path(path)
+    batch_lookup.write_csv(rows, out_path)
+
+    def print_address(r):
+        if r["ip"] in reports:
+            print_report(reports[r["ip"]])
+        else:                             # the lookup crashed, so there is no report
+            print_header(f"ADDRESS: {r['ip']}")
+            print(f"  {Color.RED}Lookup failed: {r['error']}{Color.END}")
+        print_row("Times seen in file", r["count"])
+
+    # Each address's report is built as text first, so --find can highlight
+    # and count matches in it (the count works with --brief too).
+    def find_in(block):
+        """highlight() each line, except the Map link: every public IP's map URL
+        contains "google.com", which would make a search for "google" match them all."""
+        out, total = [], 0
+        for line in block.splitlines(keepends=True):
+            if _ANSI.sub("", line).strip().startswith("Map "):
+                out.append(line)
+                continue
+            line, found = highlight(line, find)
+            out.append(line)
+            total += found
+        return "".join(out), total
+
+    blocks, matches = [], {}
+    for r in rows:
+        block, found = find_in(_capture(print_address, r))
+        blocks.append(block)
+        if found:
+            matches[r["ip"]] = found
+
+    if as_json:
+        data = {"input": path, "output": out_path, "results": rows,
+                "skipped_lines": [n for n, _ in skipped]}
+        if find:
+            data["find"] = {"text": find, "matches": matches}
+        print(json.dumps(data, indent=2))
+        return rows
+
+    print("\r" + " " * 60 + "\r", end="")
+    if not brief:
+        print("".join(blocks), end="")
+        print_header(f"SUMMARY: {os.path.basename(path)}")
+    print(f"  {Color.CYAN}{'IP address':<40}{'Scope':<12}{'Country':<9}ISP / note{Color.END}")
+    for r in rows:
+        scope = r["scope"].split(" ")[0] or "?"
+        note = r["isp"] or (f"{Color.RED}{r['error']}{Color.END}" if r["error"]
+                            and scope in ("Public", "?") else "")
+        line = f"  {r['ip']:<40}{scope:<12}{r['country_code'] or '-':<9}{note}"
+        print(highlight(line, find)[0])
+    s = batch_lookup.summarize(rows)
+    print(f"\n  {s['total']} unique address(es): {s['public']} public, "
+          f"{s['not_public']} not public, {s['failed']} failed lookup(s)")
+    if skipped:
+        lines = ", ".join(str(n) for n, _ in skipped[:10]) + (" ..." if len(skipped) > 10 else "")
+        print(f"  {Color.YELLOW}Skipped {len(skipped)} line(s) with no IP address: "
+              f"line {lines}{Color.END}")
+    if find:
+        if matches:
+            ips = ", ".join(list(matches)[:10]) + (" ..." if len(matches) > 10 else "")
+            print(f"  {Color.HIGHLIGHT}Find \"{find}\"{Color.END}: "
+                  f"{sum(matches.values())} match(es) in {len(matches)} address(es) ({ips})")
+        else:
+            print(f"  {Color.YELLOW}Find \"{find}\": no matches{Color.END}")
+    print(f"\n{Color.GREEN}Results saved to {os.path.abspath(out_path)}{Color.END}")
+    return rows
+
+
 def save_results(data, path):
     """Feature: save results to a .json or .txt file for ticket records."""
     with open(path, "w", encoding="utf-8") as fh:
@@ -485,6 +628,7 @@ MENU = """
   6) Ping a host
   7) Traceroute to a host
   8) IPv6 readiness check
+  9) Batch lookup from a .txt/.csv file (export to CSV)
   q) Quit
 """
 
@@ -515,8 +659,14 @@ def interactive_menu():
             (show_ping if choice == "6" else show_traceroute)(host)
         elif choice == "8":
             show_ipv6_check()
+        elif choice == "9":
+            path = input("File with IP addresses (.txt or .csv): ").strip().strip('"')
+            if path:
+                default = batch_lookup.default_output_path(path)
+                out = input(f"Save results as [{default}]: ").strip().strip('"') or default
+                show_batch(path, out_path=out)
         else:
-            print(f"{Color.YELLOW}Please choose 1-8 or q.{Color.END}")
+            print(f"{Color.YELLOW}Please choose 1-9 or q.{Color.END}")
 
 
 def parse_args(argv=None):
@@ -532,6 +682,14 @@ def parse_args(argv=None):
     parser.add_argument("--trace", metavar="HOST", help="traceroute to an IP address or hostname")
     parser.add_argument("--ipv6-check", action="store_true",
                         help="check whether IPv6 works end to end")
+    parser.add_argument("--batch", metavar="FILE",
+                        help="look up every IP in a .txt/.csv file and export the results to CSV")
+    parser.add_argument("--out", metavar="FILE",
+                        help="CSV file for --batch results (default: <FILE>_results.csv)")
+    parser.add_argument("--brief", action="store_true",
+                        help="with --batch, print only the summary table, not every full report")
+    parser.add_argument("--find", metavar="TEXT",
+                        help="with --batch, highlight every match of TEXT and count the matches")
     parser.add_argument("--json", action="store_true", help="output raw JSON")
     parser.add_argument("--save", metavar="FILE", help="save the results to FILE (JSON)")
     parser.add_argument("--no-color", action="store_true", help="disable coloured output")
@@ -542,7 +700,10 @@ def main(argv=None):
     args = parse_args(argv)
     if args.no_color or args.json or not sys.stdout.isatty():
         Color.disable()
-    if args.subnet:
+    if args.batch:
+        show_batch(args.batch, out_path=args.out, as_json=args.json, brief=args.brief,
+                   find=args.find)
+    elif args.subnet:
         show_subnet(args.subnet, as_json=args.json, save_path=args.save)
     elif args.local:
         show_local_network(as_json=args.json, save_path=args.save)
