@@ -6,7 +6,7 @@ Items are in priority order (P1 is highest).
 |----------|------|-----|--------|
 | P1 | **Local network info**: show the private IP, subnet mask, default gateway and DNS servers next to the public IP | Technicians usually need public and private addressing together | Done |
 | P1 | **Subnet calculator**: enter `192.168.1.0/26` and get the network/broadcast address, usable host range and host count (IPv4 and IPv6) | A frequent technician task, and it reuses the `ipaddress` module | Done |
-| P2 | **Batch lookup**: read a list of IPs from a .txt/.csv file and export the results to CSV | Useful when checking firewall or log entries | To do |
+| P2 | **Batch lookup**: read a list of IPs from a .txt/.csv file and export the results to CSV | Useful when checking firewall or log entries | Done |
 | P2 | **Reverse DNS / WHOIS lookup** (hostname of an IP, network owner) | Fuller troubleshooting picture | To do |
 | P3 | **Connectivity tests**: ping and traceroute to a chosen IP, with an IPv6 readiness check | Shows whether IPv6 really works end-to-end | Done |
 | P3 | **History**: keep a log of past lookups and detect when the public IP changes | Helps track dynamic IP changes from an ISP | To do |
