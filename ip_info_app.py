@@ -38,6 +38,8 @@ How to run
     python ip_info_app.py --batch-whois ips.txt     # the same for every IP in a file
     python ip_info_app.py --batch-both ips.txt      # IP details + reverse DNS / WHOIS
     python ip_info_app.py --batch ips.txt --resolve-hostnames   # also read hostnames
+    python ip_info_app.py --history                 # past lookups (newest last)
+    python ip_info_app.py --ip-changes              # every change of my public IP
 
 Code layout (for teams continuing this project)
 -----------------------------------------------
@@ -69,6 +71,7 @@ from colorama import Back, Fore, Style, just_fix_windows_console
 
 import batch_lookup
 import connectivity
+import history
 import local_network
 import reverse_whois
 import subnet_calc
@@ -375,14 +378,19 @@ def print_report(report):
 def show_my_ips(as_json=False, save_path=None):
     """Feature: look up and display this computer's public IPv4 and IPv6."""
     results = get_my_report()
+    status = history.record_my_ips(results)          # None when history is off
 
     if as_json:
-        print(json.dumps(results, indent=2))
+        shown = dict(results, ip_changes=status["changes"]) if status else results
+        print(json.dumps(shown, indent=2))
     else:
         print_header("MY PUBLIC IP ADDRESSES")
         print_row("Public IPv4", results["public_ipv4"] or f"{Color.RED}not detected{Color.END}")
         print_row("Public IPv6", results["public_ipv6"] or
                   f"{Color.YELLOW}not available (network has no IPv6){Color.END}")
+        if status:
+            colour = Color.YELLOW + Color.BOLD if status["changes"] else Color.GREEN
+            print(f"  {colour}{history.status_text(status)}{Color.END}")
         for report in results["reports"]:
             print_report(report)
     if save_path:
@@ -397,6 +405,7 @@ def show_lookup(ip, as_json=False, save_path=None):
     except ValueError:
         print(f"{Color.RED}'{ip}' is not a valid IPv4 or IPv6 address.{Color.END}")
         return None
+    history.record_lookup(report)
     if as_json:
         print(json.dumps(report, indent=2))
     else:
@@ -629,6 +638,7 @@ def show_batch(path, out_path=None, as_json=False, brief=False, find=None, mode=
         if found:
             matches[r["ip"]] = found
     summary = batch_summary(rows, mode)
+    history.record_batch(path, mode, len(rows), summary, rows)
 
     if as_json:
         data = {"input": path, "output": out_path, "mode": mode, "summary": summary,
@@ -715,8 +725,48 @@ def show_whois(text, as_json=False, save_path=None):
     except ValueError:
         print(f"{Color.RED}'{text}' is not a valid IPv4 or IPv6 address.{Color.END}")
         return None
+    history.record_whois(result)
     return _finish(result, as_json, save_path,
                    lambda r: print_rows(reverse_whois.lookup_rows(r)))
+
+
+def show_history(limit=20, changes_only=False, as_json=False):
+    """Feature: past lookups, or every change of this computer's public IP."""
+    if changes_only:
+        changes = history.ip_changes()
+        if as_json:
+            print(json.dumps(changes, indent=2))
+            return changes
+        print_header("PUBLIC IP CHANGES")
+        if not changes:
+            checks = len(history.load("my_ip"))
+            print(f"  No changes recorded ({checks} check(s) of your public IP so far). "
+                  "Run --me now and then to track it.")
+        for c in changes:
+            print(f"  {c['time'].replace('T', ' ')}  {Color.YELLOW}{c['text']}{Color.END}"
+                  f"  (previous check {c['since'].replace('T', ' ')})")
+        return changes
+
+    entries = history.load()[-limit:] if limit else history.load()
+    if as_json:
+        print(json.dumps(entries, indent=2))
+        return entries
+    print_header(f"LOOKUP HISTORY (last {len(entries)})")
+    if not entries:
+        print("  No lookups recorded yet.")
+    for entry in entries:
+        when, kind, target, result = history.entry_row(entry)
+        colour = Color.YELLOW if entry.get("data", {}).get("changes") else ""
+        print(f"  {when}  {Color.CYAN}{kind:<26}{Color.END}{target:<30} "
+              f"{colour}{result}{Color.END if colour else ''}")
+        for ip, count, ip_result in history.batch_ips(entry):    # addresses in a batch
+            seen = f" (seen {count}x)" if count > 1 else ""
+            print(f"  {'':<21}{'':<26}- {ip:<28} {ip_result}{seen}")
+        omitted = entry.get("data", {}).get("ips_omitted")
+        if omitted:
+            print(f"  {'':<21}{'':<26}  ... and {omitted} more (see the exported CSV)")
+    print(f"\n  {Color.BLUE}(history file: {history.history_path()}){Color.END}")
+    return entries
 
 
 def save_results(data, path):
@@ -743,6 +793,7 @@ MENU = """
  10) Reverse DNS / WHOIS lookup (hostname, network owner)
  11) Batch reverse DNS / WHOIS from a .txt/.csv file (export to CSV)
  12) Batch IP details + reverse DNS / WHOIS from a .txt/.csv file
+ 13) Lookup history and public IP changes
   q) Quit
 """
 
@@ -784,8 +835,11 @@ def interactive_menu():
         elif choice == "10":
             ip = input("Enter an IPv4 or IPv6 address [8.8.8.8]: ").strip() or "8.8.8.8"
             show_whois(ip)
+        elif choice == "13":
+            show_history()
+            show_history(changes_only=True)
         else:
-            print(f"{Color.YELLOW}Please choose 1-12 or q.{Color.END}")
+            print(f"{Color.YELLOW}Please choose 1-13 or q.{Color.END}")
 
 
 def parse_args(argv=None):
@@ -823,6 +877,14 @@ def parse_args(argv=None):
                         help="reverse DNS (hostname) and WHOIS (network owner) for an IP")
     parser.add_argument("--json", action="store_true", help="output raw JSON")
     parser.add_argument("--save", metavar="FILE", help="save the results to FILE (JSON)")
+    parser.add_argument("--history", nargs="?", const=20, type=int, metavar="N",
+                        help="show the last N lookups (default 20, 0 for all)")
+    parser.add_argument("--ip-changes", action="store_true",
+                        help="show every change of this computer's public IP")
+    parser.add_argument("--clear-history", action="store_true",
+                        help="delete the lookup history")
+    parser.add_argument("--no-history", action="store_true",
+                        help="don't record this run in the lookup history")
     parser.add_argument("--no-color", action="store_true", help="disable coloured output")
     return parser.parse_args(argv)
 
@@ -833,7 +895,16 @@ def main(argv=None):
         Color.disable()
     batch = [(args.batch, "ip"), (args.batch_whois, "whois"), (args.batch_both, "both")]
     batch_file, batch_mode = next(((f, m) for f, m in batch if f), (None, None))
-    if batch_file:
+    if args.no_history:
+        history.ENABLED = False
+    if args.clear_history:
+        removed = history.clear()
+        print("Lookup history deleted." if removed else "There was no lookup history.")
+    elif args.history is not None:
+        show_history(args.history, as_json=args.json)
+    elif args.ip_changes:
+        show_history(changes_only=True, as_json=args.json)
+    elif batch_file:
         show_batch(batch_file, out_path=args.out, as_json=args.json, brief=args.brief,
                    find=args.find, mode=batch_mode, hostnames=args.resolve_hostnames)
     elif args.subnet:
@@ -857,6 +928,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    history.ENABLED = True          # only when run as a program, never in the tests
     try:
         main()
     except KeyboardInterrupt:

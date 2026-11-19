@@ -25,6 +25,7 @@ DEVASC Project Activity 3, Option 2. IPeek is a Python prototype for network tec
 | 14 | Batch lookup: reads the IPs from a .txt/.csv file (firewall exports, logs; IPs can be in any column) and exports every field of the single-IP report to CSV, in the CLI and the GUI | `batch_lookup.py` |
 | 15 | Reverse DNS / WHOIS: the real hostname of an IP (PTR lookup, with a forward-confirmation check) and who owns its network (owner, IP range/CIDR, abuse contact, registry), for one IP or every IP in a .txt/.csv file (exported to CSV), in the CLI and the GUI | `reverse_whois.py` |
 | 16 | Batch extras: run **both** lookups (IP details + reverse DNS / WHOIS) for every IP in one go, and optionally read **hostnames** from the file (each is resolved to its IP addresses, which are then looked up; names that don't resolve are reported), in the CLI and the GUI | `batch_lookup.py` |
+| 17 | Lookup history: every lookup is logged on this computer, and each check of your public IP is compared with the last one, so a change of IP from the ISP is reported straight away. `--history`, `--ip-changes` and a History tab in the GUI | `history.py` |
 
 ## APIs used
 
@@ -82,6 +83,10 @@ python ip_info_app.py --batch-both samples/whois_ips.txt        # IP details + r
 python ip_info_app.py --batch-both samples/hostnames.txt --resolve-hostnames   # hostnames too
 python ip_info_app.py --batch samples/hostnames.txt --resolve-hostnames --brief
 python ip_info_app.py --batch-whois samples/hostnames.txt --resolve-hostnames --json
+python ip_info_app.py --history                     # the last 20 lookups (--history 50, or 0 for all)
+python ip_info_app.py --ip-changes                  # every change of your public IP
+python ip_info_app.py --me --no-history             # a check that isn't recorded
+python ip_info_app.py --clear-history               # delete the history
 
 
 python gui_app.py                     # desktop window
@@ -106,12 +111,13 @@ python -m unittest discover -s tests -v
 
 ## Desktop GUI
 
-[`gui_app.py`](gui_app.py) opens IPeek in a window. It has four tabs:
+[`gui_app.py`](gui_app.py) opens IPeek in a window. It has five tabs:
 
 * **My public IPs** shows your public IPv4 and IPv6 at the top, then the full report for each. **Refresh** looks them up again.
 * **Look up an IP** takes any IPv4 or IPv6 address, with example buttons for public, private and link-local addresses.
 * **Batch lookup** opens a .txt or .csv file, looks up every IP in it with a progress bar and can **Export CSV**. A **Look up** switch chooses **IP details** (the same as the Look up tab), **Reverse DNS / WHOIS** (the same as the Reverse DNS / WHOIS tab) or **Both**. Tick **Resolve hostnames in the file** to also read hostnames such as `dns.google`: each is resolved to its IP addresses, which are looked up and shown with the hostname they came from. A **View** toggle switches between **Reports** (one vertical report per IP, like the Look up tab) and **Table** (one row per IP, all fields). The **Find** box highlights every match in either view; use ▲/▼ (or Enter / Shift+Enter) to go through them, Esc to clear, and Ctrl+F to jump to it.
 * **Reverse DNS / WHOIS** shows an address's hostname and who owns its network, and can **Save report (JSON)**.
+* **History** lists past lookups (newest first) or only the **Public IP changes**, and can **Clear history**. A batch lookup is listed with every address it checked and the result for each (up to 500 per batch; the exported CSV has them all), so you can search the history for an IP and see which batch it was in. Like the Batch lookup tab, it has a **View** toggle between **Table** (one row per lookup) and **Reports** (one block per lookup with its details), and a **Find** box that highlights every match (▲/▼ or Enter / Shift+Enter to go through them, Ctrl+F to jump to it). The **My public IPs** tab also says whether your public IP has changed since the last check.
 
 The first two tabs can **Save report (JSON)** and **Open map** in your browser. The GUI has no networking or analysis code of its own. It calls `get_my_report()` and `build_report()` from `ip_info_app.py`, so the CLI and the GUI always give the same answers. Lookups run in a background thread, so the window doesn't freeze while it waits for an API.
 
@@ -136,6 +142,7 @@ New Project Activity 4 features each live in their own module, so team members c
 * `connectivity.py`: ping, traceroute and the IPv6 readiness check. It runs the system's `ping`/`tracert`/`traceroute` without a shell, and checks the host name first so it can't be used to inject commands.
 * `batch_lookup.py`: batch lookup. It finds the IPs in every column of a .txt/.csv file (ports such as `203.0.113.5:443` are removed, duplicates are looked up once and counted), runs `build_report()` for each, and writes the results to CSV. Private addresses skip the API, which saves the free-tier limit; a large file of public IPs can still use up ipapi.co's daily requests, and then ipwho.is takes over. It can run IP details, reverse DNS / WHOIS, or both for every address (`both_row()` merges the two, renaming the WHOIS `country`/`source` columns to `whois_country`/`whois_source`). With `--resolve-hostnames`, `resolve_entries()` turns hostnames into their IP addresses first; it is off by default because logs are full of dotted names (such as `HELO mail.example.org`) that aren't meant to be looked up.
 * `reverse_whois.py`: reverse DNS and WHOIS. The hostname comes from a real PTR lookup through the computer's DNS resolver, then a forward-confirmation check resolves the hostname back to see whether it points to the same IP (a mismatch is a common sign of a misconfigured or spoofed mail server). The network owner comes from RDAP, the JSON version of WHOIS. Private addresses skip RDAP because they have no public record. Only the owner organisation and abuse e-mail are shown, not personal contact names. For batch lookups (`--batch-whois` and the GUI), addresses in a network that was already looked up reuse that WHOIS answer, so a long file only sends one registry query per network and stays under the registries' rate limits.
+* `history.py`: lookup history. Each lookup is saved as one line of JSON in the user's app-data folder (Windows: `%APPDATA%\IPeek\history.jsonl`; macOS: `~/Library/Application Support/IPeek/`; Linux: `~/.local/share/ipeek/`), so it works the same for the `.exe` and is never committed. Only the newest 1,000 entries are kept. Logging is only switched on when the CLI or GUI is started as a program, so the unit tests never write to a real history file.
 
 ## Team workflow
 
