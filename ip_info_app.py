@@ -86,7 +86,7 @@ IPAPI_URL = "https://ipapi.co/{ip}/json/"          # primary details API
 IPWHOIS_URL = "https://ipwho.is/{ip}"              # backup details API
 IPSTACK_URL = "https://api.ipstack.com/{ip}"       # only used when an ipstack key is set
 TIMEOUT = 5                                        # seconds per request
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
 
 
 # ---------------------------------------------------------------------------
