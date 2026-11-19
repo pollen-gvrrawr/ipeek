@@ -149,36 +149,36 @@ class WindowTests(unittest.TestCase):
     def test_find_highlights_every_match_and_steps_through_them(self):
         self._run_fake_batch()
         text = self.app.batch_pane.text
-        self.app.find_var.set("google")                 # case-insensitive
-        self.assertEqual(len(self.app.find_matches), 2)  # 8.8.8.8 and 8.8.4.4
-        self.assertEqual(self.app.find_count.cget("text"), "1 of 2")
+        self.app.batch_find.var.set("google")                 # case-insensitive
+        self.assertEqual(len(self.app.batch_find.matches), 2)  # 8.8.8.8 and 8.8.4.4
+        self.assertEqual(self.app.batch_find.count.cget("text"), "1 of 2")
         self.assertEqual(len(text.tag_ranges("match")), 4)        # 2 ranges, start+end each
         first = text.index("current.first")
-        self.app.find_step(1)
-        self.assertEqual(self.app.find_count.cget("text"), "2 of 2")
+        self.app.batch_find.step(1)
+        self.assertEqual(self.app.batch_find.count.cget("text"), "2 of 2")
         self.assertNotEqual(text.index("current.first"), first)
-        self.app.find_step(1)                           # wraps around to the first
-        self.assertEqual(self.app.find_count.cget("text"), "1 of 2")
-        self.app.find_step(-1)                          # and backwards to the last
-        self.assertEqual(self.app.find_count.cget("text"), "2 of 2")
+        self.app.batch_find.step(1)                           # wraps around to the first
+        self.assertEqual(self.app.batch_find.count.cget("text"), "1 of 2")
+        self.app.batch_find.step(-1)                          # and backwards to the last
+        self.assertEqual(self.app.batch_find.count.cget("text"), "2 of 2")
 
     def test_find_no_results_and_clear(self):
         self._run_fake_batch()
-        self.app.find_var.set("cloudflare")
-        self.assertEqual(self.app.find_count.cget("text"), "No results")
-        self.app.find_var.set("")
-        self.assertEqual(self.app.find_count.cget("text"), "")
+        self.app.batch_find.var.set("cloudflare")
+        self.assertEqual(self.app.batch_find.count.cget("text"), "No results")
+        self.app.batch_find.var.set("")
+        self.assertEqual(self.app.batch_find.count.cget("text"), "")
         self.assertEqual(self.app.batch_pane.text.tag_ranges("match"), ())
 
     def test_find_in_table_view_marks_matching_rows(self):
         self._run_fake_batch()
         self.app.batch_view.set("table")
         self.app.set_batch_view()
-        self.app.find_var.set("192.168")
+        self.app.batch_find.var.set("192.168")
         table = self.app.batch_table
-        self.assertEqual(len(self.app.find_matches), 1)
-        self.assertIn("match", table.item(self.app.find_matches[0], "tags"))
-        self.assertEqual(table.selection(), (self.app.find_matches[0],))
+        self.assertEqual(len(self.app.batch_find.matches), 1)
+        self.assertIn("match", table.item(self.app.batch_find.matches[0], "tags"))
+        self.assertEqual(table.selection(), (self.app.batch_find.matches[0],))
         self.assertEqual(table.item(table.selection()[0], "values")[0], "192.168.1.10")
 
     def test_view_toggle_switches_between_reports_and_table(self):
@@ -298,6 +298,141 @@ class WindowTests(unittest.TestCase):
         self.assertIn("Could not resolve 1 hostname(s): nope.invalid",
                       self.app.batch_info.cget("text"))
         self.assertEqual(self.app.batch_result_mode, "both")
+
+    def _temporary_history(self):
+        import tempfile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        for name, value in (("ENABLED", True),
+                            ("PATH", os.path.join(tmp.name, "history.jsonl"))):
+            patcher = mock.patch.object(gui_app.history, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_my_ips_shows_public_ip_change(self):
+        self._temporary_history()
+        first = {"generated": "2026-11-19T10:00:00", "public_ipv4": "1.1.1.1",
+                 "public_ipv6": None, "reports": []}
+        self.app.show_my_ips(first)
+        self.assertIn("First check", self.app.ip_change.cget("text"))
+        self.app.show_my_ips(dict(first, public_ipv4="2.2.2.2"))
+        self.assertIn("Public IPv4 changed: 1.1.1.1 -> 2.2.2.2", self.app.ip_change.cget("text"))
+
+    def test_history_tab_lists_lookups_and_changes(self):
+        self._temporary_history()
+        for ip in ("1.1.1.1", "2.2.2.2"):
+            gui_app.history.record_my_ips({"public_ipv4": ip, "public_ipv6": None,
+                                           "reports": []})
+        gui_app.history.record("lookup", "8.8.8.8", "Public, Google LLC, US")
+        self.app.tabs.select(self.app.history_tab)
+        self.app.update()                                 # fires <<NotebookTabChanged>>
+        rows = [self.app.history_table.item(i, "values")
+                for i in self.app.history_table.get_children()]
+        self.assertEqual(rows[0][2], "8.8.8.8")           # newest first
+        self.assertEqual(len(rows), 3)
+        self.assertIn("1 public IP change(s) in 2 check(s)",
+                      self.app.history_info.cget("text"))
+        self.app.history_view.set("changes")
+        self.app.refresh_history()
+        rows = [self.app.history_table.item(i, "values")
+                for i in self.app.history_table.get_children()]
+        self.assertEqual(rows, [rows[0]])
+        self.assertEqual(rows[0][1:3], ("Public IPv4 changed", "2.2.2.2"))
+
+    def _fill_history(self):
+        self._temporary_history()
+        for ip in ("1.1.1.1", "2.2.2.2"):
+            gui_app.history.record_my_ips({"public_ipv4": ip, "public_ipv6": None,
+                                           "reports": []})
+        gui_app.history.record("lookup", "8.8.8.8", "Public, Google LLC, US",
+                               {"isp": "Google LLC", "country": "US"})
+        gui_app.history.record("whois", "1.1.1.1", "one.one.one.one, APNIC",
+                               {"hostname": "one.one.one.one", "owner": "APNIC"})
+        self.app.refresh_history()
+
+    def test_history_reports_view(self):
+        self._fill_history()
+        self.assertEqual(self.app.history_layout.get(), "table")       # default
+        self.app.history_layout.set("reports")
+        self.app.set_history_layout()
+        self.app.update_idletasks()
+        self.assertTrue(self.app.history_pane.winfo_manager())
+        self.assertFalse(self.app.history_table_frame.winfo_manager())
+        text = self.pane_text(self.app.history_pane)
+        self.assertLess(text.index("Reverse DNS / WHOIS"), text.index("IP lookup"))  # newest 1st
+        for expected in ("ISP / Organization", "Google LLC", "Owner", "APNIC",
+                         "Public IPv4 changed: 1.1.1.1 -> 2.2.2.2"):
+            self.assertIn(expected, text)
+        self.assertEqual(len(self.app.history_pane.data), 4)            # Save history (JSON)
+
+    def test_history_find_in_both_views(self):
+        self._fill_history()
+        bar = self.app.history_find
+        bar.var.set("1.1.1.1")                       # table: matching rows
+        # both my_ip checks (the 2nd says "changed: 1.1.1.1 -> 2.2.2.2") + the WHOIS lookup
+        self.assertEqual(len(bar.matches), 3)
+        self.assertEqual(bar.count.cget("text"), "1 of 3")
+        self.assertEqual(self.app.history_table.selection(), (bar.matches[0],))
+        self.app.history_layout.set("reports")       # reports: every match in the text
+        self.app.set_history_layout()
+        self.assertGreaterEqual(len(bar.matches), 3)
+        self.assertTrue(self.app.history_pane.text.tag_ranges("current"))
+        bar.step(-1)
+        self.assertEqual(bar.count.cget("text"), f"{len(bar.matches)} of {len(bar.matches)}")
+        bar.var.set("")
+        self.assertEqual(self.app.history_pane.text.tag_ranges("match"), ())
+
+    def test_history_shows_the_addresses_of_a_batch(self):
+        self._temporary_history()
+        rows = [{"ip": "8.8.8.8", "count": 2, "scope": "Public (globally routable)",
+                 "isp": "Google LLC", "country_code": "US", "error": ""},
+                {"ip": "192.168.1.1", "count": 1, "scope": "Private (not routable)",
+                 "isp": "", "country_code": "", "error": "not a public address"}]
+        gui_app.history.record_batch("ips.txt", "ip", 2, "2 unique address(es)", rows)
+        self.app.refresh_history()
+        table = self.app.history_table
+        values = [table.item(i, "values") for i in table.get_children()]
+        self.assertEqual(values[0][1:3], ("Batch lookup", "ips.txt"))
+        self.assertEqual(values[1][1:], ("   ↳ address in batch", "8.8.8.8",
+                                         "Public, Google LLC, US (seen 2x)"))
+        self.assertEqual(values[2][2], "192.168.1.1")
+        self.app.history_find.var.set("192.168.1.1")   # find which batch an IP was in
+        self.assertEqual(table.item(table.selection()[0], "values")[2], "192.168.1.1")
+
+        self.app.history_layout.set("reports")
+        self.app.set_history_layout()
+        text = self.pane_text(self.app.history_pane)
+        self.assertIn("Addresses in this batch (2)", text)
+        self.assertIn("Public, Google LLC, US (seen 2x)", text)
+
+    def test_history_changes_view_in_reports(self):
+        self._fill_history()
+        self.app.history_view.set("changes")
+        self.app.history_layout.set("reports")
+        self.app.set_history_layout()
+        self.app.refresh_history()
+        text = self.pane_text(self.app.history_pane)
+        self.assertIn("Public IPv4 changed", text)
+        self.assertIn("Old address", text)
+        self.assertNotIn("IP lookup", text)
+
+    def test_ctrl_f_focuses_the_open_tabs_find_bar(self):
+        self.app.tabs.select(self.app.history_tab)
+        self.assertEqual(self.app._focus_find(), "break")
+        self.app.tabs.select(self.app.batch_tab)
+        self.assertEqual(self.app._focus_find(), "break")
+        self.app.tabs.select(0)
+        self.assertIsNone(self.app._focus_find())
+
+    def test_clear_history_asks_first(self):
+        self._temporary_history()
+        gui_app.history.record("lookup", "8.8.8.8", "x")
+        with mock.patch.object(gui_app.messagebox, "askyesno", return_value=False):
+            self.app.clear_history()
+        self.assertEqual(len(gui_app.history.load()), 1)
+        with mock.patch.object(gui_app.messagebox, "askyesno", return_value=True):
+            self.app.clear_history()
+        self.assertEqual(gui_app.history.load(), [])
 
     def test_whois_tab_shows_hostname_and_owner(self):
         result = {"ip": "8.8.8.8", "ptr_name": "8.8.8.8.in-addr.arpa",
