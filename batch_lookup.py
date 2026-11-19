@@ -15,10 +15,12 @@ Input rules (so firewall and log exports work without cleaning them first):
     * Lines that start with # are comments. A line with no IP address is
       listed as skipped, except the first line (usually a header).
 
-Used by the CLI in ip_info_app.py (--batch and menu option 9) and by the
-"Batch lookup" tab in gui_app.py. The lookup itself is passed in as a
-function (normally ip_info_app.build_report), so this module does not import
-ip_info_app and the tests can run without internet.
+It runs either of two lookups for every address:
+    * IP details (ip_info_app.build_report): --batch, menu option 9
+    * Reverse DNS / WHOIS (reverse_whois.lookup): --batch-whois, menu option 11
+Both are also in the "Batch lookup" tab in gui_app.py. The lookup itself is
+passed in as a function, so this module does not import ip_info_app and the
+tests can run without internet.
 """
 
 import csv
@@ -97,29 +99,83 @@ def result_row(ip, count, report=None, error=None):
     return row
 
 
-def run_batch(entries, lookup, progress=None):
+# ---------------------------------------------------------------------------
+# Batch reverse DNS / WHOIS (results of reverse_whois.lookup)
+# ---------------------------------------------------------------------------
+WHOIS_FIELDS = ("owner", "network_name", "range", "cidr", "type", "country", "abuse_email",
+                "registered", "last_changed", "registry", "source")
+WHOIS_COLUMNS = (("ip", "count", "ptr_name", "hostname", "other_names", "forward_confirmed",
+                  "dns_error") + WHOIS_FIELDS + ("whois_error",))
+_CONFIRMED = {True: "yes", False: "no", None: "could not check"}
+
+
+def whois_row(ip, count, result=None, error=None):
+    """Flatten one reverse_whois.lookup() result into a dict with WHOIS_COLUMNS keys."""
+    row = dict.fromkeys(WHOIS_COLUMNS, "")
+    row.update(ip=ip, count=count)
+    if result is None:
+        row["whois_error"] = error or "lookup failed"
+        return row
+    dns = result["dns"]
+    row.update(ptr_name=result["ptr_name"], hostname=dns["hostname"] or "",
+               other_names=", ".join(dns["aliases"]), dns_error=dns["error"] or "",
+               forward_confirmed=_CONFIRMED[dns["forward_confirmed"]] if dns["hostname"] else "")
+    whois = result.get("whois")
+    if whois is None:
+        row["whois_error"] = result.get("whois_error", "")
+        return row
+    for key in WHOIS_FIELDS:
+        row[key] = "" if whois.get(key) is None else whois[key]
+    return row
+
+
+def whois_not_public(row):
+    """True for addresses that have no public WHOIS record (private, loopback...)."""
+    return row["whois_error"].startswith("not a public address")
+
+
+def summarize_whois(rows):
+    """Count addresses for the batch WHOIS summary line.
+
+    hostnames  - addresses with a reverse DNS hostname
+    owners     - public addresses whose network owner was found
+    not_public - private, loopback, etc. (no public WHOIS record)
+    failed     - public addresses whose WHOIS lookup failed
+    """
+    return {"total": len(rows),
+            "hostnames": sum(1 for r in rows if r["hostname"]),
+            "owners": sum(1 for r in rows if r["owner"]),
+            "not_public": sum(1 for r in rows if whois_not_public(r)),
+            "failed": sum(1 for r in rows if r["whois_error"] and not whois_not_public(r))}
+
+
+# ---------------------------------------------------------------------------
+# Running a batch and saving it
+# ---------------------------------------------------------------------------
+def run_batch(entries, lookup, progress=None, to_row=result_row):
     """Look up every (ip, count) entry and return a list of result rows.
 
-    lookup(ip) must return a build_report() dict. progress(done, total, ip),
-    if given, is called after each address. One failed lookup does not stop
-    the batch: its row gets an error instead.
+    lookup(ip) returns one result: a build_report() dict by default, or a
+    reverse_whois.lookup() dict with to_row=whois_row. progress(done, total,
+    ip), if given, is called after each address. One failed lookup does not
+    stop the batch: its row gets an error instead.
     """
     rows = []
     total = len(entries)
     for done, (ip, count) in enumerate(entries, start=1):
         try:
-            rows.append(result_row(ip, count, lookup(ip)))
+            rows.append(to_row(ip, count, lookup(ip)))
         except Exception as exc:                         # keep going with the rest
-            rows.append(result_row(ip, count, error=str(exc)))
+            rows.append(to_row(ip, count, error=str(exc)))
         if progress:
             progress(done, total, ip)
     return rows
 
 
-def write_csv(rows, path):
+def write_csv(rows, path, columns=CSV_COLUMNS):
     """Write result rows to a CSV file. utf-8-sig so Excel shows accents correctly."""
     with open(path, "w", newline="", encoding="utf-8-sig") as fh:
-        writer = csv.DictWriter(fh, fieldnames=CSV_COLUMNS)
+        writer = csv.DictWriter(fh, fieldnames=columns)
         writer.writeheader()
         writer.writerows(rows)
 
@@ -143,6 +199,6 @@ def summarize(rows):
     return counts
 
 
-def default_output_path(input_path):
-    """reports/firewall.txt -> reports/firewall_results.csv"""
-    return os.path.splitext(input_path)[0] + "_results.csv"
+def default_output_path(input_path, suffix="_results"):
+    """reports/firewall.txt -> reports/firewall_results.csv (or _whois.csv)"""
+    return os.path.splitext(input_path)[0] + suffix + ".csv"

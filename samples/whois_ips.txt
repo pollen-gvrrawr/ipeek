@@ -1,0 +1,32 @@
+# Sample IP list for IPeek batch Reverse DNS / WHOIS lookup
+#   python ip_info_app.py --batch-whois samples/whois_ips.txt
+# One address per line. Lines starting with # are comments.
+
+# One address from each regional internet registry
+8.8.8.8
+1.1.1.1
+193.0.6.139
+200.160.2.3
+196.216.2.6
+
+# Same network as each other: the second one reuses the first WHOIS answer
+9.9.9.9
+9.9.9.10
+
+# IPv6 (forward confirmation shows "could not check" on a network without IPv6)
+2001:4860:4860::8888
+
+# Public, but has no hostname (no PTR record)
+151.101.1.140
+
+# Hostname does not point back to the IP (forward-confirmed: no):
+# 193.0.6.139 (www.ripe.net) and 196.216.2.6 (www.afrinic.net) above
+
+# Private and link-local: hostname only if your local DNS knows it, no public WHOIS
+192.168.1.1
+10.0.0.5
+fe80::1
+
+# Duplicate (counted twice) and an invalid line (reported as skipped)
+8.8.8.8
+999.1.1.1

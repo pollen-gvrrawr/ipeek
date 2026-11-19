@@ -40,7 +40,8 @@ REGISTRIES = {"whois.arin.net": "ARIN (North America)",
               "whois.ripe.net": "RIPE NCC (Europe, Middle East, Central Asia)",
               "whois.apnic.net": "APNIC (Asia-Pacific)",
               "whois.lacnic.net": "LACNIC (Latin America, Caribbean)",
-              "whois.afrinic.net": "AFRINIC (Africa)"}
+              "whois.afrinic.net": "AFRINIC (Africa)",
+              "whois.registro.br": "NIC.br (Brazil, part of LACNIC)"}
 
 
 # ---------------------------------------------------------------------------
@@ -174,19 +175,55 @@ def whois(ip):
     return info
 
 
+class WhoisCache:
+    """Remembers WHOIS answers by IP range, for batch lookups.
+
+    One RDAP answer covers a whole network (e.g. 8.8.8.0 - 8.8.8.255), so
+    other addresses in that range reuse it instead of asking the registry
+    again. That keeps a long batch fast and under the registries' rate limits.
+    """
+
+    def __init__(self):
+        self._ranges = []                    # (first address, last address, info)
+
+    def get(self, ip):
+        addr = ipaddress.ip_address(ip)
+        for first, last, info in self._ranges:
+            if first.version == addr.version and first <= addr <= last:
+                return dict(info)
+        return None
+
+    def add(self, info):
+        try:
+            first, last = (ipaddress.ip_address(p) for p in info["range"].split(" - "))
+        except (AttributeError, ValueError):     # no usable range in the answer
+            return
+        self._ranges.append((first, last, dict(info)))
+
+
 # ---------------------------------------------------------------------------
 # Both together
 # ---------------------------------------------------------------------------
-def lookup(text):
-    """Reverse DNS + WHOIS for an IPv4/IPv6 address. Raises ValueError if invalid."""
+def lookup(text, cache=None):
+    """Reverse DNS + WHOIS for an IPv4/IPv6 address. Raises ValueError if invalid.
+
+    cache, a WhoisCache, is used by batch lookups to reuse WHOIS answers for
+    addresses in a network that was already looked up.
+    """
     addr = ipaddress.ip_address(text.strip())
     ip = str(addr)
     result = {"ip": ip, "ptr_name": addr.reverse_pointer, "dns": reverse_dns(ip)}
     if not addr.is_global:
         result["whois_error"] = "not a public address, so it has no public WHOIS record"
         return result
+    cached = cache.get(ip) if cache is not None else None
+    if cached is not None:
+        result["whois"] = cached
+        return result
     try:
         result["whois"] = whois(ip)
+        if cache is not None:
+            cache.add(result["whois"])
     except requests.ConnectionError:
         result["whois_error"] = "could not reach rdap.org (check the internet connection)"
     except requests.Timeout:

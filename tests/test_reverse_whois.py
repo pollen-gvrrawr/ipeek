@@ -187,5 +187,84 @@ class CliTests(unittest.TestCase):
         self.assertIn("not a valid", self.run_cli("--whois", "not-an-ip"))
 
 
+class WhoisCacheTests(unittest.TestCase):
+    def test_reuses_answer_for_same_network_only(self):
+        with mock.patch.object(rw, "reverse_dns", side_effect=fake_dns), \
+                mock.patch.object(rw.requests, "get",
+                                  return_value=fake_response(data=ARIN)) as get:
+            cache = rw.WhoisCache()
+            first = rw.lookup("8.8.8.8", cache)
+            second = rw.lookup("8.8.8.200", cache)          # same 8.8.8.0/24 network
+            rw.lookup("8.8.4.4", cache)                     # different network
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual(second["whois"]["owner"], first["whois"]["owner"])
+
+    def test_ignores_answers_without_a_range(self):
+        cache = rw.WhoisCache()
+        cache.add({"range": None, "owner": "X"})
+        self.assertIsNone(cache.get("8.8.8.8"))
+
+
+class BatchWhoisTests(unittest.TestCase):
+    """Batch reverse DNS / WHOIS (batch_lookup + --batch-whois)."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.src = os.path.join(self.tmp.name, "ips.txt")
+        with open(self.src, "w", encoding="utf-8") as fh:
+            fh.write("8.8.8.8\n192.168.1.1\n8.8.8.8\n8.8.8.9\n")
+
+    def test_whois_row_and_summary(self):
+        import batch_lookup
+        with mock.patch.object(rw, "reverse_dns", side_effect=fake_dns), \
+                mock.patch.object(rw.requests, "get", return_value=fake_response(data=ARIN)):
+            rows = batch_lookup.run_batch([("8.8.8.8", 2), ("192.168.1.1", 1)], rw.lookup,
+                                          to_row=batch_lookup.whois_row)
+        self.assertEqual(list(rows[0]), list(batch_lookup.WHOIS_COLUMNS))
+        self.assertEqual((rows[0]["hostname"], rows[0]["owner"], rows[0]["count"]),
+                         ("dns.google", "Google LLC", 2))
+        self.assertEqual(rows[0]["forward_confirmed"], "yes")
+        self.assertTrue(batch_lookup.whois_not_public(rows[1]))
+        self.assertEqual(batch_lookup.summarize_whois(rows),
+                         {"total": 2, "hostnames": 2, "owners": 1, "not_public": 1, "failed": 0})
+
+    def test_crashed_lookup_becomes_an_error_row(self):
+        import batch_lookup
+        rows = batch_lookup.run_batch([("8.8.8.8", 1)], mock.Mock(side_effect=RuntimeError("x")),
+                                      to_row=batch_lookup.whois_row)
+        self.assertEqual(rows[0]["whois_error"], "x")
+        self.assertEqual(batch_lookup.summarize_whois(rows)["failed"], 1)
+
+    def test_cli_batch_whois_writes_csv_and_uses_cache(self):
+        import csv
+        with mock.patch.object(rw, "reverse_dns", side_effect=fake_dns), \
+                mock.patch.object(rw.requests, "get",
+                                  return_value=fake_response(data=ARIN)) as get, \
+                redirect_stdout(io.StringIO()) as out:
+            app.main(["--batch-whois", self.src, "--no-color", "--find", "google llc"])
+        text = out.getvalue()
+        self.assertEqual(get.call_count, 1)        # 8.8.8.9 reused the 8.8.8.0/24 answer
+        self.assertIn("BATCH REVERSE DNS / WHOIS", text)
+        self.assertIn("Owner                 : [Google LLC]", text)
+        self.assertIn("3 unique address(es): 3 with a hostname, 2 with a network owner", text)
+        csv_path = os.path.join(self.tmp.name, "ips_whois.csv")      # default name
+        with open(csv_path, encoding="utf-8-sig", newline="") as fh:
+            rows = list(csv.DictReader(fh))
+        self.assertEqual([r["ip"] for r in rows], ["8.8.8.8", "192.168.1.1", "8.8.8.9"])
+        self.assertEqual((rows[0]["count"], rows[0]["abuse_email"]),
+                         ("2", "network-abuse@google.com"))
+
+    def test_cli_batch_whois_json(self):
+        with mock.patch.object(rw, "reverse_dns", side_effect=fake_dns), \
+                mock.patch.object(rw.requests, "get", return_value=fake_response(data=ARIN)), \
+                redirect_stdout(io.StringIO()) as out:
+            app.main(["--batch-whois", self.src, "--json",
+                      "--out", os.path.join(self.tmp.name, "w.csv")])
+        data = json.loads(out.getvalue())
+        self.assertEqual(data["results"][0]["owner"], "Google LLC")
+
+
 if __name__ == "__main__":
     unittest.main()

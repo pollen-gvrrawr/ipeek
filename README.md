@@ -23,7 +23,7 @@ DEVASC Project Activity 3, Option 2. IPeek is a Python prototype for network tec
 | 12 | Connectivity tests: ping and traceroute to any host, and an IPv6 readiness check that shows whether IPv6 works end to end | `connectivity.py` |
 | 13 | Standalone Windows `.exe` files for the CLI and the GUI, so technicians can run IPeek without installing Python | `.github/workflows/release.yml` |
 | 14 | Batch lookup: reads the IPs from a .txt/.csv file (firewall exports, logs; IPs can be in any column) and exports every field of the single-IP report to CSV, in the CLI and the GUI | `batch_lookup.py` |
-| 15 | Reverse DNS / WHOIS: the real hostname of an IP (PTR lookup, with a forward-confirmation check) and who owns its network (owner, IP range/CIDR, abuse contact, registry), in the CLI and the GUI | `reverse_whois.py` |
+| 15 | Reverse DNS / WHOIS: the real hostname of an IP (PTR lookup, with a forward-confirmation check) and who owns its network (owner, IP range/CIDR, abuse contact, registry), for one IP or every IP in a .txt/.csv file (exported to CSV), in the CLI and the GUI | `reverse_whois.py` |
 
 ## APIs used
 
@@ -75,6 +75,8 @@ python ip_info_app.py --batch samples/ips.txt --find AS15169 --brief   # summary
 python ip_info_app.py --batch samples/ips.txt --find cloudflare --json # matches per IP in the JSON
 python ip_info_app.py --whois 8.8.8.8                # hostname (reverse DNS) + network owner (WHOIS)
 python ip_info_app.py --whois 2001:4860:4860::8888 --json
+python ip_info_app.py --batch-whois samples/whois_ips.txt       # every IP in a file -> samples/whois_ips_whois.csv
+python ip_info_app.py --batch-whois samples/whois_log.csv --brief --find google
 
 
 python gui_app.py                     # desktop window
@@ -85,7 +87,10 @@ The [`samples/`](samples/) folder has two files for trying the batch lookup:
 * [`samples/ips.txt`](samples/ips.txt): one address per line. It has public IPv4 and IPv6 DNS servers, private, loopback and link-local addresses, a duplicate (counted twice) and two invalid lines (reported as skipped).
 * [`samples/firewall_log.csv`](samples/firewall_log.csv): a firewall-style export with a header row and the IPs in the `src_ip` and `dst_ip` columns, including one with a port (`8.8.8.8:53`).
 
-In the GUI, open the **Batch lookup** tab, click **Choose file...** and pick one of these files. Each run of a sample file makes about 6 real API calls, so repeated runs count towards ipapi.co's daily limit.
+* [`samples/whois_ips.txt`](samples/whois_ips.txt): for `--batch-whois`. One address from each regional registry (ARIN, RIPE NCC, APNIC, LACNIC/NIC.br, AFRINIC), two addresses in the same network (the second reuses the first WHOIS answer), IPv6, a public address with no hostname, hostnames that don't point back to their IP, private addresses, a duplicate and an invalid line.
+* [`samples/whois_log.csv`](samples/whois_log.csv): a mail/SSH/DNS server log for `--batch-whois`, with the IPs in the `client_ip` and `server_ip` columns.
+
+In the GUI, open the **Batch lookup** tab, click **Choose file...** and pick one of these files (choose **Reverse DNS / WHOIS** under **Look up** for the two WHOIS samples). Each run of a sample file makes about 6 real API calls, so repeated runs count towards ipapi.co's daily limit.
 
 Run the tests. They work offline because the APIs are mocked:
 
@@ -99,7 +104,7 @@ python -m unittest discover -s tests -v
 
 * **My public IPs** shows your public IPv4 and IPv6 at the top, then the full report for each. **Refresh** looks them up again.
 * **Look up an IP** takes any IPv4 or IPv6 address, with example buttons for public, private and link-local addresses.
-* **Batch lookup** opens a .txt or .csv file, looks up every IP in it with a progress bar and can **Export CSV**. A **View** toggle switches between **Reports** (one vertical report per IP, like the Look up tab) and **Table** (one row per IP, all fields). The **Find** box highlights every match in either view; use ▲/▼ (or Enter / Shift+Enter) to go through them, Esc to clear, and Ctrl+F to jump to it.
+* **Batch lookup** opens a .txt or .csv file, looks up every IP in it with a progress bar and can **Export CSV**. A **Look up** switch chooses **IP details** (the same as the Look up tab) or **Reverse DNS / WHOIS** (the same as the Reverse DNS / WHOIS tab). A **View** toggle switches between **Reports** (one vertical report per IP, like the Look up tab) and **Table** (one row per IP, all fields). The **Find** box highlights every match in either view; use ▲/▼ (or Enter / Shift+Enter) to go through them, Esc to clear, and Ctrl+F to jump to it.
 * **Reverse DNS / WHOIS** shows an address's hostname and who owns its network, and can **Save report (JSON)**.
 
 The first two tabs can **Save report (JSON)** and **Open map** in your browser. The GUI has no networking or analysis code of its own. It calls `get_my_report()` and `build_report()` from `ip_info_app.py`, so the CLI and the GUI always give the same answers. Lookups run in a background thread, so the window doesn't freeze while it waits for an API.
@@ -124,7 +129,7 @@ New Project Activity 4 features each live in their own module, so team members c
 * `local_network.py`: local network info. It reads the operating system's own tools (`ipconfig`, `ip`, `ifconfig`); the parsers are tested with sample output from each system.
 * `connectivity.py`: ping, traceroute and the IPv6 readiness check. It runs the system's `ping`/`tracert`/`traceroute` without a shell, and checks the host name first so it can't be used to inject commands.
 * `batch_lookup.py`: batch lookup. It finds the IPs in every column of a .txt/.csv file (ports such as `203.0.113.5:443` are removed, duplicates are looked up once and counted), runs `build_report()` for each, and writes the results to CSV. Private addresses skip the API, which saves the free-tier limit; a large file of public IPs can still use up ipapi.co's daily requests, and then ipwho.is takes over.
-* `reverse_whois.py`: reverse DNS and WHOIS. The hostname comes from a real PTR lookup through the computer's DNS resolver, then a forward-confirmation check resolves the hostname back to see whether it points to the same IP (a mismatch is a common sign of a misconfigured or spoofed mail server). The network owner comes from RDAP, the JSON version of WHOIS. Private addresses skip RDAP because they have no public record. Only the owner organisation and abuse e-mail are shown, not personal contact names.
+* `reverse_whois.py`: reverse DNS and WHOIS. The hostname comes from a real PTR lookup through the computer's DNS resolver, then a forward-confirmation check resolves the hostname back to see whether it points to the same IP (a mismatch is a common sign of a misconfigured or spoofed mail server). The network owner comes from RDAP, the JSON version of WHOIS. Private addresses skip RDAP because they have no public record. Only the owner organisation and abuse e-mail are shown, not personal contact names. For batch lookups (`--batch-whois` and the GUI), addresses in a network that was already looked up reuse that WHOIS answer, so a long file only sends one registry query per network and stays under the registries' rate limits.
 
 ## Team workflow
 

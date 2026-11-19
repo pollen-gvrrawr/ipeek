@@ -1,0 +1,10 @@
+timestamp,event,client_ip,server_ip,detail
+2026-11-19 09:12:01,SMTP connect,193.0.6.139,192.168.1.25,HELO mail.example.org
+2026-11-19 09:12:04,SMTP connect,151.101.1.140:51234,192.168.1.25,no reverse DNS
+2026-11-19 09:13:40,SSH failed login,196.216.2.6,192.168.1.30,user admin
+2026-11-19 09:13:45,SSH failed login,196.216.2.6,192.168.1.30,user root
+2026-11-19 09:15:02,HTTPS request,34.117.59.81,192.168.1.40,GET /
+2026-11-19 09:16:10,DNS query,192.168.1.50,9.9.9.9,example.com
+2026-11-19 09:16:11,DNS query,192.168.1.50,9.9.9.10,example.net
+2026-11-19 09:17:30,HTTPS request,2001:4860:4860::8888,192.168.1.40,GET /status
+2026-11-19 09:18:00,note,,,this line has no IP address and is reported as skipped

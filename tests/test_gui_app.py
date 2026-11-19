@@ -191,6 +191,55 @@ class WindowTests(unittest.TestCase):
         self.assertFalse(self.app.batch_pane.winfo_manager())
         self.assertTrue(self.app.batch_table_frame.winfo_manager())
 
+    def test_batch_whois_mode_shows_owner_in_both_views(self):
+        self.app.batch_mode.set("whois")
+        self.app.set_batch_mode()
+        result = {"ip": "8.8.8.8", "ptr_name": "8.8.8.8.in-addr.arpa",
+                  "dns": {"hostname": "dns.google", "aliases": [], "forward_confirmed": True,
+                          "error": None},
+                  "whois": {"owner": "Google LLC", "network_name": "GOGL",
+                            "range": "8.8.8.0 - 8.8.8.255", "cidr": "8.8.8.0/24",
+                            "type": "DIRECT ALLOCATION", "country": None,
+                            "abuse_email": "network-abuse@google.com",
+                            "registered": "2023-12-28", "last_changed": "2023-12-28",
+                            "registry": "ARIN (North America)", "source": "https://rdap"}}
+        private = {"ip": "192.168.1.1", "ptr_name": "1.1.168.192.in-addr.arpa",
+                   "dns": {"hostname": None, "aliases": [], "forward_confirmed": None,
+                           "error": "no PTR record"},
+                   "whois_error": "not a public address, so it has no public WHOIS record"}
+        self.app.batch_entries, self.app.batch_path = [("8.8.8.8", 2), ("192.168.1.1", 1)], "x.txt"
+        with mock.patch.object(gui_app.reverse_whois, "lookup",
+                               side_effect=lambda ip, cache=None: result if ip == "8.8.8.8"
+                               else private):
+            self.app.run_batch()
+            while True:
+                done, value, error = self.app._results.get(timeout=5)
+                done(value, error)
+                if done == self.app.show_batch:
+                    break
+        text = self.pane_text(self.app.batch_pane)
+        self.assertIn("Reverse DNS / WHOIS: 8.8.8.8", text)
+        self.assertIn("Times seen in file", text)
+        self.assertIn("Google LLC", text)
+        columns = [c for c, _, _ in gui_app.WHOIS_BATCH_COLUMNS]
+        rows = [dict(zip(columns, self.app.batch_table.item(i, "values")))
+                for i in self.app.batch_table.get_children()]
+        self.assertEqual((rows[0]["hostname"], rows[0]["owner"]), ("dns.google", "Google LLC"))
+        self.assertEqual(rows[1]["hostname"], "no PTR record")
+        self.assertIn("not public", rows[1]["note"])
+        self.assertIn("1 with a network owner", self.app.batch_info.cget("text"))
+        self.assertEqual(self.app.batch_result_mode, "whois")
+
+    def test_switching_batch_mode_clears_old_results(self):
+        self._run_fake_batch()                          # IP-details results on screen
+        self.assertTrue(self.app.batch_table.get_children())
+        self.app.batch_mode.set("whois")
+        self.app.set_batch_mode()
+        self.assertEqual(self.app.batch_table.get_children(), ())
+        self.assertEqual(self.app.batch_rows, [])
+        self.assertIn("disabled", self.app.batch_export_btn.state())
+        self.assertEqual(self.app.batch_table["columns"][2], "hostname")
+
     def test_whois_tab_shows_hostname_and_owner(self):
         result = {"ip": "8.8.8.8", "ptr_name": "8.8.8.8.in-addr.arpa",
                   "dns": {"hostname": "dns.google", "aliases": [], "forward_confirmed": True,
